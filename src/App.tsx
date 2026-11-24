@@ -33,6 +33,8 @@ import {
   PI_SIGNIN_ERROR_MESSAGE,
   authenticateWithPiSdk,
   initPiSdk,
+  isPiBrowserAvailable,
+  logoutPiSession,
   resumeIncompletePayments,
 } from "./lib/piSdk";
 import { Header } from "./components/Header";
@@ -111,8 +113,22 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    initPiSdk();
-    void resumeIncompletePayments();
+    let active = true;
+    void (async () => {
+      const sdkReady = await initPiSdk();
+      void resumeIncompletePayments();
+      if (active && sdkReady && isPiBrowserAvailable()) {
+        const attempt = await authenticateWithPiSdk();
+        if (active && attempt.success && attempt.result) {
+          setPiConnected(true);
+          setUsername(attempt.result.username);
+          setKycVerified(attempt.result.kycVerified);
+          setInPiBrowser(true);
+          setAuthError(null);
+        }
+      }
+    })();
+
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -121,10 +137,6 @@ export default function App() {
         if (typeof p.lowDataMode === "boolean") setLowDataMode(p.lowDataMode);
         if (p.textScale) setTextScale(p.textScale);
         if (typeof p.isAdmin === "boolean") setIsAdmin(p.isAdmin);
-        if (typeof p.piConnected === "boolean") setPiConnected(p.piConnected);
-        if (typeof p.inPiBrowser === "boolean") setInPiBrowser(p.inPiBrowser);
-        if (typeof p.username === "string") setUsername(p.username);
-        if (typeof p.kycVerified === "boolean") setKycVerified(p.kycVerified);
         if (typeof p.kycTrustAwarded === "boolean") setKycTrustAwarded(p.kycTrustAwarded);
         if (typeof p.trustScore === "number") setTrustScore(p.trustScore);
         if (typeof p.availablePi === "number") setAvailablePi(p.availablePi);
@@ -151,6 +163,9 @@ export default function App() {
       // Ignore malformed cache
     }
     setHydrated(true);
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -163,10 +178,6 @@ export default function App() {
           lowDataMode,
           textScale,
           isAdmin,
-          piConnected,
-          inPiBrowser,
-          username,
-          kycVerified,
           kycTrustAwarded,
           trustScore,
           availablePi,
@@ -199,10 +210,6 @@ export default function App() {
     lowDataMode,
     textScale,
     isAdmin,
-    piConnected,
-    inPiBrowser,
-    username,
-    kycVerified,
     kycTrustAwarded,
     trustScore,
     availablePi,
@@ -1329,8 +1336,10 @@ export default function App() {
   };
 
   const handleDeleteMyData = () => {
+    void logoutPiSession();
     localStorage.removeItem(STORAGE_KEY);
     setPiConnected(false);
+    setInPiBrowser(false);
     setUsername("");
     setKycVerified(false);
     setKycTrustAwarded(false);

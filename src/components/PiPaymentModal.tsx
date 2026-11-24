@@ -93,7 +93,7 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
                 {receipt ? "Payment Complete" : payment.title}
               </h3>
               <p className="text-[11px] text-[#FFC800]">
-                Pi SDK v2.0 Testnet · sandbox: true
+                Pi SDK v2.0 · Official Pi Wallet
               </p>
             </div>
           </div>

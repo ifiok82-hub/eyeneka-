@@ -68,7 +68,7 @@ export const PiAuthModal: React.FC<PiAuthModalProps> = ({
             <div>
               <h3 className="font-display font-bold text-sm">Sign In with Pi Network</h3>
               <p className="text-[11px] text-[#FFC800]">
-                Pi SDK v2.0 · Scopes: username, payments
+                Pi SDK v2.0 · Verified Pioneer Sign-In
               </p>
             </div>
           </div>

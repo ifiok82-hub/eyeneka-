@@ -48,13 +48,13 @@ interface IncompletePiPayment {
 }
 
 interface WindowPi {
-  init: (config: { version: string; sandbox: boolean }) => void;
+  init: (config: { version: string }) => Promise<void> | void;
   authenticate: (
     scopes: string[],
     onIncompletePaymentFound?: (payment: IncompletePiPayment) => void
   ) => Promise<{
     accessToken?: string;
-    user: { uid: string; username: string; kyc?: boolean };
+    user?: { uid?: string; username?: string; kyc?: boolean };
   }>;
   getIncompletePayments?: () => Promise<IncompletePiPayment[]>;
   createPayment: (
@@ -78,42 +78,104 @@ declare global {
 }
 
 let piSdkInitialized = false;
-let sessionAuthenticated = false;
+let initInFlight: Promise<boolean> | null = null;
+let inMemorySessionToken: string | null = null;
+let inMemoryUser: { uid: string; username: string } | null = null;
+let paymentScopeAuthenticated = false;
+
+export function getSessionToken(): string | null {
+  return inMemorySessionToken;
+}
+
+export function getVerifiedSessionUser(): { uid: string; username: string } | null {
+  return inMemoryUser;
+}
+
+export async function logoutPiSession(): Promise<void> {
+  const token = inMemorySessionToken;
+  inMemorySessionToken = null;
+  inMemoryUser = null;
+  paymentScopeAuthenticated = false;
+  if (!token) return;
+  try {
+    await fetch("/api/pi/logout", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+  } catch {
+    // Best-effort server revocation
+  }
+}
 
 export function isPiBrowserAvailable(): boolean {
   return typeof window !== "undefined" && typeof window.Pi !== "undefined";
 }
 
-export function initPiSdk(): boolean {
+export async function initPiSdk(): Promise<boolean> {
   if (typeof window === "undefined" || !window.Pi) {
     return false;
   }
-  try {
-    if (!piSdkInitialized) {
-      window.Pi.init({
-        version: "2.0",
-        sandbox: true,
-      });
-      piSdkInitialized = true;
-    }
+  if (piSdkInitialized) {
     return true;
-  } catch (err) {
-    console.log("[EYENEKA Pi] Pi.init failed:", err);
-    return false;
   }
+  if (initInFlight) {
+    return await initInFlight;
+  }
+  initInFlight = (async () => {
+    try {
+      await window.Pi!.init({ version: "2.0" });
+      piSdkInitialized = true;
+      return true;
+    } catch (err) {
+      console.log("[EYENEKA Pi] Pi.init failed:", err);
+      return false;
+    } finally {
+      initInFlight = null;
+    }
+  })();
+  return await initInFlight;
 }
 
 async function postJsonWithDetails(
   url: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  bearerToken?: string | null
 ): Promise<{ status: number; ok: boolean; data: Record<string, unknown> }> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (bearerToken) {
+    headers.Authorization = `Bearer ${bearerToken}`;
+  }
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(payload),
   });
   const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   return { status: response.status, ok: response.ok, data };
+}
+
+async function exchangeAccessTokenForSession(accessToken: string): Promise<{
+  sessionToken: string;
+  user: { uid: string; username: string };
+}> {
+  const res = await postJsonWithDetails("/api/pi/login", { accessToken });
+  const userObj = res.data.user as { uid?: unknown; username?: unknown } | undefined;
+  const sessionToken = typeof res.data.sessionToken === "string" ? res.data.sessionToken : "";
+  const uid = typeof userObj?.uid === "string" ? userObj.uid : "";
+  const username =
+    typeof userObj?.username === "string" ? userObj.username.replace(/^@/, "") : "";
+
+  if (!res.ok || !sessionToken || !uid || !username) {
+    const serverErr =
+      (typeof res.data.error === "string" && res.data.error) || PI_SIGNIN_ERROR_MESSAGE;
+    throw new Error(serverErr);
+  }
+
+  inMemorySessionToken = sessionToken;
+  inMemoryUser = { uid, username };
+  return { sessionToken, user: { uid, username } };
 }
 
 export async function handleIncompletePayment(payment: IncompletePiPayment): Promise<void> {
@@ -150,7 +212,7 @@ export async function handleIncompletePayment(payment: IncompletePiPayment): Pro
 
 export async function resumeIncompletePayments(): Promise<number> {
   let resumed = 0;
-  const sdkReady = initPiSdk();
+  const sdkReady = await initPiSdk();
 
   if (sdkReady && window.Pi && typeof window.Pi.getIncompletePayments === "function") {
     try {
@@ -182,7 +244,7 @@ export async function resumeIncompletePayments(): Promise<number> {
 }
 
 export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
-  const sdkReady = initPiSdk();
+  const sdkReady = await initPiSdk();
   if (!sdkReady || !window.Pi) {
     return {
       success: false,
@@ -192,30 +254,32 @@ export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
   }
 
   try {
-    const auth = await window.Pi.authenticate(PI_AUTH_SCOPES, (incomplete) => {
+    const auth = await window.Pi.authenticate(["username"], (incomplete) => {
       void handleIncompletePayment(incomplete);
     });
-    if (auth?.user?.username) {
-      sessionAuthenticated = true;
+    const accessToken = typeof auth?.accessToken === "string" ? auth.accessToken.trim() : "";
+    if (!accessToken) {
       return {
-        success: true,
-        result: {
-          connected: true,
-          username: auth.user.username.replace(/^@/, ""),
-          uid: auth.user.uid,
-          accessToken: auth.accessToken,
-          kycVerified: Boolean(auth.user.kyc ?? true),
-          inPiBrowser: true,
-        },
+        success: false,
+        result: null,
+        error: PI_SIGNIN_ERROR_MESSAGE,
       };
     }
+
+    // Ignore any uid or username from window.Pi.authenticate; verify via backend only
+    const verified = await exchangeAccessTokenForSession(accessToken);
     return {
-      success: false,
-      result: null,
-      error: PI_SIGNIN_ERROR_MESSAGE,
+      success: true,
+      result: {
+        connected: true,
+        username: verified.user.username,
+        uid: verified.user.uid,
+        kycVerified: true,
+        inPiBrowser: true,
+      },
     };
   } catch (err) {
-    console.log("[EYENEKA Pi] Pi.authenticate error:", err);
+    console.log("[EYENEKA Pi] Pi.authenticate / login error:", err);
     return {
       success: false,
       result: null,
@@ -233,24 +297,28 @@ async function ensurePiPaymentSession(
   if (!window.Pi) {
     throw new Error(PI_BROWSER_REQUIRED_MESSAGE);
   }
-  if (sessionAuthenticated) {
+  if (paymentScopeAuthenticated) {
     return;
   }
   onStatusChange?.("Authenticating Pi Browser session...");
   const auth = await window.Pi.authenticate(PI_AUTH_SCOPES, (incomplete) => {
     void handleIncompletePayment(incomplete);
   });
-  if (!auth?.user?.username) {
-    throw new Error("Pi authentication did not return a Pioneer session.");
+  const accessToken = typeof auth?.accessToken === "string" ? auth.accessToken.trim() : "";
+  if (!accessToken) {
+    throw new Error("Pi authentication did not return an access token.");
   }
-  sessionAuthenticated = true;
+  if (!inMemorySessionToken) {
+    await exchangeAccessTokenForSession(accessToken);
+  }
+  paymentScopeAuthenticated = true;
 }
 
 export async function executePiPayment(
   payload: PiPaymentPayload,
   onStatusChange?: (statusText: string) => void
 ): Promise<PiPaymentReceipt> {
-  const sdkReady = initPiSdk();
+  const sdkReady = await initPiSdk();
   if (!sdkReady || typeof window === "undefined" || !window.Pi) {
     throw new Error(PI_BROWSER_REQUIRED_MESSAGE);
   }

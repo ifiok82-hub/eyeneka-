@@ -9,6 +9,11 @@ import {
   completePiPayment,
   resumeServerIncompletePayments,
 } from "./api/_lib/piPlatform.js";
+import {
+  exchangePiAccessToken,
+  revokeSessionFromHeader,
+  verifySessionFromHeader,
+} from "./api/_lib/piAuth.js";
 
 dotenv.config();
 
@@ -36,8 +41,59 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
 
+  app.use((_req, res, next) => {
+    res.removeHeader("X-Frame-Options");
+    const isProd = process.env.NODE_ENV === "production";
+    const scriptSrc = isProd
+      ? "script-src 'self' https://sdk.minepi.com"
+      : "script-src 'self' 'unsafe-inline' https://sdk.minepi.com";
+    res.setHeader(
+      "Content-Security-Policy",
+      [
+        "default-src 'self'",
+        scriptSrc,
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        "font-src 'self' https://fonts.gstatic.com data:",
+        "img-src 'self' data: blob:",
+        "connect-src 'self' https://socialchain.app",
+        "frame-ancestors 'self' https://*.pinet.com https://*.minepi.com",
+      ].join("; ") + ";"
+    );
+    next();
+  });
+
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", app: "EYENEKA" });
+  });
+
+  app.post("/api/pi/login", async (req, res) => {
+    try {
+      const result = await exchangePiAccessToken((req.body ?? {}) as Record<string, unknown>);
+      res.status(result.status).json(result.body);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Pi login failed.";
+      res.status(502).json({ ok: false, error: message });
+    }
+  });
+
+  app.get("/api/pi/me", (req, res) => {
+    const verified = verifySessionFromHeader(req.headers.authorization);
+    if (!verified) {
+      res.status(401).json({ ok: false, error: "Unauthorized" });
+      return;
+    }
+    res.json({
+      ok: true,
+      user: {
+        uid: verified.uid,
+        username: verified.username,
+      },
+    });
+  });
+
+  app.post("/api/pi/logout", (req, res) => {
+    revokeSessionFromHeader(req.headers.authorization);
+    res.json({ ok: true });
   });
 
   app.post("/api/pi/approve", async (req, res) => {
@@ -158,7 +214,11 @@ async function startServer() {
   } else {
     const distPath = path.resolve(__dirname, "dist");
     app.use(express.static(distPath));
-    app.get("*", (_req, res) => {
+    app.get("*", (req, res) => {
+      if (req.path === "/pi-app-validation.txt" || req.path === "/validation-key.txt") {
+        res.status(404).type("text/plain").send("Not found");
+        return;
+      }
       res.sendFile(path.join(distPath, "index.html"));
     });
   }

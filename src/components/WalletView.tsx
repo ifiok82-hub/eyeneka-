@@ -117,7 +117,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
             <p className="text-xs text-slate-400">
               Status:{" "}
               {piConnected
-                ? `${inPiBrowser ? "Pi Browser Testnet SDK v2.0 (sandbox: true)" : "Pi Session Active"}${
+                ? `${inPiBrowser ? "Pi Browser SDK v2.0" : "Pi Session Active"}${
                     kycVerified ? " · KYC Verified" : " · KYC Unverified"
                   }`
                 : "Wallet not connected"}
