@@ -4,8 +4,11 @@ import {
   CareResource,
   CertificateRecord,
   ChildTracker,
+  CircleTemplate,
   FirstAidGuide,
   Gig,
+  GigCategory,
+  GigTemplate,
   LanguageName,
   Lesson,
   MedicineReminder,
@@ -13,14 +16,22 @@ import {
   PeerListenerMessage,
   PendingPiPayment,
   SavingsCircle,
+  SkillCategory,
   TabKey,
   TextScale,
   WalletTransaction,
 } from "./types";
+import {
+  OFFICIAL_CIRCLE_TEMPLATES,
+  OFFICIAL_FIRST_AID_GUIDES,
+  OFFICIAL_GIG_TEMPLATES,
+  OFFICIAL_STARTER_LESSONS,
+  TODAY_ISO,
+} from "./data/officialStarterData";
 import { authenticateWithPiSdk, initPiSdk } from "./lib/piSdk";
 import { Header } from "./components/Header";
 import { BottomNav } from "./components/BottomNav";
-import { HomeView } from "./components/HomeView";
+import { AdminPublishPayload, HomeView } from "./components/HomeView";
 import { LearnView } from "./components/LearnView";
 import { WorkView } from "./components/WorkView";
 import { CareView } from "./components/CareView";
@@ -30,7 +41,7 @@ import { LawView } from "./components/LawView";
 import { PiPaymentModal } from "./components/PiPaymentModal";
 import { PiAuthModal } from "./components/PiAuthModal";
 
-const STORAGE_KEY = "eyeneka_real_v3";
+const STORAGE_KEY = "eyeneka_official_v4";
 
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
@@ -38,6 +49,7 @@ export default function App() {
   const [language, setLanguage] = useState<LanguageName>("English");
   const [lowDataMode, setLowDataMode] = useState(false);
   const [textScale, setTextScale] = useState<TextScale>("normal");
+  const [isAdmin, setIsAdmin] = useState(true);
 
   // Real Pi Auth & Balance State (all start at zero / empty)
   const [piConnected, setPiConnected] = useState(false);
@@ -51,16 +63,22 @@ export default function App() {
   const [healthScore, setHealthScore] = useState<number | null>(null);
   const [circleLeaderActive, setCircleLeaderActive] = useState(false);
 
+  // Official Starter Products (Published by EYENEKA Official, 0 fake completions/reviews/earnings)
+  const [lessons, setLessons] = useState<Lesson[]>(OFFICIAL_STARTER_LESSONS);
+  const [gigTemplates, setGigTemplates] = useState<GigTemplate[]>(OFFICIAL_GIG_TEMPLATES);
+  const [guides, setGuides] = useState<FirstAidGuide[]>(OFFICIAL_FIRST_AID_GUIDES);
+  const [circleTemplates, setCircleTemplates] = useState<CircleTemplate[]>(OFFICIAL_CIRCLE_TEMPLATES);
+
   // Real User-Created Collections (all start EMPTY)
-  const [lessons, setLessons] = useState<Lesson[]>([]);
   const [certificates, setCertificates] = useState<CertificateRecord[]>([]);
   const [offlineLessonIds, setOfflineLessonIds] = useState<string[]>([]);
-  const [selectedLessonId, setSelectedLessonId] = useState<string | null>(null);
+  const [selectedLessonId, setSelectedLessonId] = useState<string | null>(
+    OFFICIAL_STARTER_LESSONS[0]?.id ?? null
+  );
 
   const [gigs, setGigs] = useState<Gig[]>([]);
   const [selectedGigId, setSelectedGigId] = useState<string | null>(null);
 
-  const [guides, setGuides] = useState<FirstAidGuide[]>([]);
   const [resources, setResources] = useState<CareResource[]>([]);
   const [childrenList, setChildrenList] = useState<ChildTracker[]>([]);
   const [meds, setMeds] = useState<MedicineReminder[]>([]);
@@ -94,6 +112,7 @@ export default function App() {
         if (p.language) setLanguage(p.language);
         if (typeof p.lowDataMode === "boolean") setLowDataMode(p.lowDataMode);
         if (p.textScale) setTextScale(p.textScale);
+        if (typeof p.isAdmin === "boolean") setIsAdmin(p.isAdmin);
         if (typeof p.piConnected === "boolean") setPiConnected(p.piConnected);
         if (typeof p.inPiBrowser === "boolean") setInPiBrowser(p.inPiBrowser);
         if (typeof p.username === "string") setUsername(p.username);
@@ -105,10 +124,12 @@ export default function App() {
         if (typeof p.healthScore === "number") setHealthScore(p.healthScore);
         if (typeof p.circleLeaderActive === "boolean") setCircleLeaderActive(p.circleLeaderActive);
         if (Array.isArray(p.lessons)) setLessons(p.lessons);
+        if (Array.isArray(p.gigTemplates)) setGigTemplates(p.gigTemplates);
+        if (Array.isArray(p.guides)) setGuides(p.guides);
+        if (Array.isArray(p.circleTemplates)) setCircleTemplates(p.circleTemplates);
         if (Array.isArray(p.certificates)) setCertificates(p.certificates);
         if (Array.isArray(p.offlineLessonIds)) setOfflineLessonIds(p.offlineLessonIds);
         if (Array.isArray(p.gigs)) setGigs(p.gigs);
-        if (Array.isArray(p.guides)) setGuides(p.guides);
         if (Array.isArray(p.resources)) setResources(p.resources);
         if (Array.isArray(p.childrenList)) setChildrenList(p.childrenList);
         if (Array.isArray(p.meds)) setMeds(p.meds);
@@ -133,6 +154,7 @@ export default function App() {
           language,
           lowDataMode,
           textScale,
+          isAdmin,
           piConnected,
           inPiBrowser,
           username,
@@ -144,10 +166,12 @@ export default function App() {
           healthScore,
           circleLeaderActive,
           lessons,
+          gigTemplates,
+          guides,
+          circleTemplates,
           certificates,
           offlineLessonIds,
           gigs,
-          guides,
           resources,
           childrenList,
           meds,
@@ -166,6 +190,7 @@ export default function App() {
     language,
     lowDataMode,
     textScale,
+    isAdmin,
     piConnected,
     inPiBrowser,
     username,
@@ -177,10 +202,12 @@ export default function App() {
     healthScore,
     circleLeaderActive,
     lessons,
+    gigTemplates,
+    guides,
+    circleTemplates,
     certificates,
     offlineLessonIds,
     gigs,
-    guides,
     resources,
     childrenList,
     meds,
@@ -248,12 +275,127 @@ export default function App() {
     setAuthModalOpen(true);
   };
 
+  // Admin Publisher handler (Home)
+  const handlePublishOfficialProduct = (payload: AdminPublishPayload) => {
+    const nowId = Date.now();
+    if (payload.productType === "Lesson") {
+      const steps =
+        payload.stepsOrChecklist.length >= 5
+          ? payload.stepsOrChecklist
+          : [
+              ...payload.stepsOrChecklist,
+              ...Array.from(
+                { length: 5 - payload.stepsOrChecklist.length },
+                (_, i) => `Review step ${payload.stepsOrChecklist.length + i + 1} carefully.`
+              ),
+            ];
+      const newLesson: Lesson = {
+        id: `official-l-${nowId}`,
+        title: payload.title,
+        category: payload.category as SkillCategory,
+        skillUnlock: payload.title,
+        durationMin: 12,
+        certificateFeePi: Math.min(0.5, Math.max(0.1, payload.pricePi || 0.3)),
+        summary: payload.description,
+        creatorHandle: "EYENEKA Official",
+        publishedAt: TODAY_ISO,
+        isOfficialStarter: true,
+        completionsCount: 0,
+        reviewsCount: 0,
+        earningsPi: 0,
+        sections: steps.map((s, idx) => ({ heading: `Step ${idx + 1}`, body: s })),
+        quiz: [
+          {
+            id: "q-1",
+            question: `What is the primary goal of "${payload.title}"?`,
+            options: [
+              payload.description.slice(0, 75),
+              "Unverified off-app solicitation",
+              "Ignoring deliverables",
+            ],
+            correctIndex: 0,
+          },
+        ],
+      };
+      setLessons((prev) => [newLesson, ...prev]);
+      setSelectedLessonId(newLesson.id);
+      showToast(`Published Official Lesson "${newLesson.title}" (0 completions).`);
+      return;
+    }
+
+    if (payload.productType === "Gig Template") {
+      const newTpl: GigTemplate = {
+        id: `official-tpl-${nowId}`,
+        title: payload.title,
+        category: payload.category as GigCategory,
+        requiredSkill: payload.title,
+        description: payload.description,
+        deadline: "48 hours",
+        pricePi: Math.min(5.0, Math.max(0.2, payload.pricePi || 1.0)),
+        checklist: payload.stepsOrChecklist,
+        author: "EYENEKA Official",
+        publishedAt: TODAY_ISO,
+        isOfficialStarter: true,
+        completionsCount: 0,
+        reviewsCount: 0,
+        earningsPi: 0,
+      };
+      setGigTemplates((prev) => [newTpl, ...prev]);
+      showToast(`Published Official Gig Template "${newTpl.title}" (0 completions).`);
+      return;
+    }
+
+    if (payload.productType === "Care Guide") {
+      const newGuide: FirstAidGuide = {
+        id: `official-aid-${nowId}`,
+        title: payload.title,
+        urgency: payload.category === "Careful Monitoring" ? "Careful Monitoring" : "Urgent Action",
+        summary: payload.description,
+        publishedBy: "EYENEKA Official",
+        publishedAt: TODAY_ISO,
+        isOfficialStarter: true,
+        viewsCount: 0,
+        completionsCount: 0,
+        reviewsCount: 0,
+        earningsPi: 0,
+        steps: payload.stepsOrChecklist,
+        seekHelpWhen: "Seek professional care immediately if Red symptoms appear.",
+      };
+      setGuides((prev) => [newGuide, ...prev]);
+      showToast(`Published Official Care Guide "${newGuide.title}" (0 views).`);
+      return;
+    }
+
+    const isMonthly = payload.category.includes("Monthly");
+    const isVote = payload.category.includes("Vote") || payload.category.includes("Food");
+    const isFood = payload.category.includes("Food");
+    const membersParsed = Number(payload.stepsOrChecklist[0]) || 10;
+    const newCircleTpl: CircleTemplate = {
+      id: `official-ctpl-${nowId}`,
+      name: payload.title,
+      description: payload.description,
+      maxMembers: Math.min(20, Math.max(5, membersParsed)),
+      contributionPi: Math.min(5.0, Math.max(0.5, payload.pricePi || 1.0)),
+      cycle: isMonthly ? "Monthly" : "Weekly",
+      payoutMode: isVote ? "Vote" : "Rotation",
+      hasFoodPool: isFood,
+      author: "EYENEKA Official",
+      publishedAt: TODAY_ISO,
+      isOfficialStarter: true,
+      completionsCount: 0,
+      reviewsCount: 0,
+      earningsPi: 0,
+    };
+    setCircleTemplates((prev) => [newCircleTpl, ...prev]);
+    showToast(`Published Official Circle Template "${newCircleTpl.name}" (0 completions).`);
+  };
+
   // Learn handlers
   const handlePublishLesson = (payload: Omit<Lesson, "id" | "publishedAt">) => {
     const newLesson: Lesson = {
       ...payload,
       id: `l-${Date.now()}`,
-      publishedAt: new Date().toISOString().slice(0, 10),
+      publishedAt: TODAY_ISO,
     };
     setLessons((prev) => [newLesson, ...prev]);
     setSelectedLessonId(newLesson.id);
@@ -263,6 +405,21 @@ export default function App() {
       "learn"
     );
     showToast(`Lesson "${newLesson.title}" published.`);
+  };
+
+  const handleUpdateLesson = (id: string, payload: Omit<Lesson, "id" | "publishedAt">) => {
+    setLessons((prev) =>
+      prev.map((l) => (l.id === id ? { ...l, ...payload } : l))
+    );
+    showToast(`Lesson "${payload.title}" updated.`);
+  };
+
+  const handleDeleteLesson = (id: string) => {
+    setLessons((prev) => prev.filter((l) => l.id !== id));
+    if (selectedLessonId === id) {
+      setSelectedLessonId(null);
+    }
+    showToast("Lesson deleted.");
   };
 
   const handleToggleOffline = (lessonId: string) => {
@@ -311,6 +468,17 @@ export default function App() {
           feePi: lesson.certificateFeePi,
         };
         setCertificates((prev) => [...prev, newCert]);
+        setLessons((prev) =>
+          prev.map((l) =>
+            l.id === lesson.id
+              ? {
+                  ...l,
+                  completionsCount: (l.completionsCount ?? 0) + 1,
+                  earningsPi: Number(((l.earningsPi ?? 0) + lesson.certificateFeePi).toFixed(2)),
+                }
+              : l
+          )
+        );
         setTrustScore((s) => Math.min(100, s + 10));
         setTransactions((prev) => [
           {
@@ -561,10 +729,43 @@ export default function App() {
     showToast("Gig flagged for Community Integrity review.");
   };
 
+  const handleUpdateGigTemplate = (id: string, updated: Partial<GigTemplate>) => {
+    setGigTemplates((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, ...updated } : t))
+    );
+    showToast("Gig template updated.");
+  };
+
+  const handleDeleteGigTemplate = (id: string) => {
+    setGigTemplates((prev) => prev.filter((t) => t.id !== id));
+    showToast("Gig template deleted.");
+  };
+
   // Care handlers
-  const handlePublishGuide = (guide: Omit<FirstAidGuide, "id">) => {
-    setGuides((prev) => [{ ...guide, id: `fa-${Date.now()}` }, ...prev]);
+  const handlePublishGuide = (guide: Omit<FirstAidGuide, "id" | "publishedAt">) => {
+    setGuides((prev) => [
+      { ...guide, id: `fa-${Date.now()}`, publishedAt: TODAY_ISO },
+      ...prev,
+    ]);
     showToast(`First Aid guide "${guide.title}" published.`);
+  };
+
+  const handleUpdateGuide = (id: string, guide: Omit<FirstAidGuide, "id" | "publishedAt">) => {
+    setGuides((prev) =>
+      prev.map((g) => (g.id === id ? { ...g, ...guide } : g))
+    );
+    showToast(`First Aid guide "${guide.title}" updated.`);
+  };
+
+  const handleDeleteGuide = (id: string) => {
+    setGuides((prev) => prev.filter((g) => g.id !== id));
+    showToast("First Aid guide deleted.");
+  };
+
+  const handleIncrementGuideView = (id: string) => {
+    setGuides((prev) =>
+      prev.map((g) => (g.id === id ? { ...g, viewsCount: g.viewsCount + 1 } : g))
+    );
   };
 
   const handleAddResource = (res: Omit<CareResource, "id" | "rating" | "reviewCount">) => {
@@ -746,6 +947,18 @@ export default function App() {
   const handleCancelCircleLeader = () => {
     setCircleLeaderActive(false);
     showToast("Circle Leader auto-renew cancelled.");
+  };
+
+  const handleUpdateCircleTemplate = (id: string, updated: Partial<CircleTemplate>) => {
+    setCircleTemplates((prev) =>
+      prev.map((t) => (t.id === id ? { ...t, ...updated } : t))
+    );
+    showToast("Circle template updated.");
+  };
+
+  const handleDeleteCircleTemplate = (id: string) => {
+    setCircleTemplates((prev) => prev.filter((t) => t.id !== id));
+    showToast("Circle template deleted.");
   };
 
   const handleCreateCircle = (payload: {
@@ -1042,13 +1255,10 @@ export default function App() {
     setEarnedMonthPi(0);
     setHealthScore(null);
     setCircleLeaderActive(false);
-    setLessons([]);
     setCertificates([]);
     setOfflineLessonIds([]);
-    setSelectedLessonId(null);
     setGigs([]);
     setSelectedGigId(null);
-    setGuides([]);
     setResources([]);
     setChildrenList([]);
     setMeds([]);
@@ -1080,6 +1290,7 @@ export default function App() {
   const availableSkillOptions = Array.from(
     new Set([
       ...lessons.map((l) => l.skillUnlock),
+      ...gigTemplates.map((t) => t.requiredSkill),
       ...gigs.map((g) => g.requiredSkill),
       ...earnedSkills,
     ])
@@ -1205,6 +1416,7 @@ export default function App() {
             username={username}
             piConnected={piConnected}
             kycVerified={kycVerified}
+            isAdmin={isAdmin}
             trustScore={trustScore}
             language={language}
             lowDataMode={lowDataMode}
@@ -1214,9 +1426,14 @@ export default function App() {
             certificates={certificates}
             gigs={gigs}
             lessons={lessons}
+            gigTemplates={gigTemplates}
+            guides={guides}
+            circleTemplates={circleTemplates}
             circles={circles}
             earnedMonthPi={earnedMonthPi}
             healthScore={healthScore}
+            onToggleAdmin={() => setIsAdmin((v) => !v)}
+            onPublishOfficialProduct={handlePublishOfficialProduct}
             onLanguageChange={setLanguage}
             onToggleLowData={() => setLowDataMode((v) => !v)}
             onTextScaleChange={setTextScale}
@@ -1238,8 +1455,11 @@ export default function App() {
             language={language}
             username={username}
             lowDataMode={lowDataMode}
+            isAdmin={isAdmin}
             onSelectLesson={setSelectedLessonId}
             onPublishLesson={handlePublishLesson}
+            onUpdateLesson={handleUpdateLesson}
+            onDeleteLesson={handleDeleteLesson}
             onToggleOffline={handleToggleOffline}
             onPassQuiz={handlePassQuiz}
             onMintCertificate={handleMintCertificate}
@@ -1250,14 +1470,18 @@ export default function App() {
         {activeTab === "work" && (
           <WorkView
             gigs={gigs.filter((g) => !blockedUsers.includes(g.buyerHandle))}
+            gigTemplates={gigTemplates}
             availableSkillOptions={availableSkillOptions}
             selectedGigId={selectedGigId}
             earnedSkills={earnedSkills}
             username={username}
             trustScore={trustScore}
             kycVerified={kycVerified}
+            isAdmin={isAdmin}
             onSelectGig={setSelectedGigId}
             onCreateGig={handleCreateGig}
+            onUpdateTemplate={handleUpdateGigTemplate}
+            onDeleteTemplate={handleDeleteGigTemplate}
             onLockEscrow={handleLockEscrow}
             onSubmitProof={handleSubmitProof}
             onReleaseEscrow={handleReleaseEscrow}
@@ -1277,7 +1501,11 @@ export default function App() {
             peerMessages={peerMessages}
             username={username}
             lowDataMode={lowDataMode}
+            isAdmin={isAdmin}
             onPublishGuide={handlePublishGuide}
+            onUpdateGuide={handleUpdateGuide}
+            onDeleteGuide={handleDeleteGuide}
+            onIncrementGuideView={handleIncrementGuideView}
             onAddResource={handleAddResource}
             onRateResource={handleRateResource}
             onRegisterCarePartner={handleRegisterCarePartner}
@@ -1294,11 +1522,15 @@ export default function App() {
         {activeTab === "save" && (
           <SaveView
             circles={circles}
+            circleTemplates={circleTemplates}
             username={username}
             circleLeaderActive={circleLeaderActive}
+            isAdmin={isAdmin}
             onUpgradeCircleLeader={handleUpgradeCircleLeader}
             onCancelCircleLeader={handleCancelCircleLeader}
             onCreateCircle={handleCreateCircle}
+            onUpdateCircleTemplate={handleUpdateCircleTemplate}
+            onDeleteCircleTemplate={handleDeleteCircleTemplate}
             onJoinCircle={handleJoinCircle}
             onContributeCycle={handleContributeCycle}
             onMarkLateDefault={handleMarkLateDefault}

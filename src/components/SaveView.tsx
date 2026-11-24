@@ -9,18 +9,22 @@ import {
   Landmark,
   Lock,
   MessageSquare,
+  Pencil,
   Plus,
   Send,
   ShieldCheck,
+  Trash2,
   Utensils,
   X,
 } from "lucide-react";
-import { SavingsCircle } from "../types";
+import { CircleTemplate, SavingsCircle } from "../types";
 
 interface SaveViewProps {
   circles: SavingsCircle[];
+  circleTemplates: CircleTemplate[];
   username: string;
   circleLeaderActive: boolean;
+  isAdmin: boolean;
   onUpgradeCircleLeader: () => void;
   onCancelCircleLeader: () => void;
   onCreateCircle: (payload: {
@@ -31,6 +35,8 @@ interface SaveViewProps {
     payoutMode: "Rotation" | "Vote";
     hasFoodPool: boolean;
   }) => void;
+  onUpdateCircleTemplate: (id: string, updated: Partial<CircleTemplate>) => void;
+  onDeleteCircleTemplate: (id: string) => void;
   onJoinCircle: (circleId: string) => void;
   onContributeCycle: (circleId: string) => void;
   onMarkLateDefault: (circleId: string, handle: string) => void;
@@ -42,11 +48,15 @@ interface SaveViewProps {
 
 export const SaveView: React.FC<SaveViewProps> = ({
   circles,
+  circleTemplates,
   username,
   circleLeaderActive,
+  isAdmin,
   onUpgradeCircleLeader,
   onCancelCircleLeader,
   onCreateCircle,
+  onUpdateCircleTemplate,
+  onDeleteCircleTemplate,
   onJoinCircle,
   onContributeCycle,
   onMarkLateDefault,
@@ -73,11 +83,21 @@ export const SaveView: React.FC<SaveViewProps> = ({
   const [foodReason, setFoodReason] = useState("");
   const [foodAmount, setFoodAmount] = useState("0.5");
 
+  // Admin Edit Circle Template state
+  const [editTpl, setEditTpl] = useState<CircleTemplate | null>(null);
+  const [etName, setEtName] = useState("");
+  const [etDesc, setEtDesc] = useState("");
+  const [etMembers, setEtMembers] = useState("10");
+  const [etAmount, setEtAmount] = useState("1.0");
+  const [etCycle, setEtCycle] = useState<"Weekly" | "Monthly">("Weekly");
+  const [etMode, setEtMode] = useState<"Rotation" | "Vote">("Rotation");
+  const [etFood, setEtFood] = useState(false);
+
   const activeCircle = circles.find((c) => c.id === selectedId) ?? circles[0] ?? null;
   const joinedCirclesCount = circles.filter((c) => c.joined).length;
   const maxAllowedCircles = circleLeaderActive ? 3 : 1;
 
-  const handleOpenCreate = () => {
+  const handleOpenCreate = (tpl?: CircleTemplate) => {
     setLimitNotice(null);
     if (joinedCirclesCount >= maxAllowedCircles) {
       setLimitNotice(
@@ -88,7 +108,33 @@ export const SaveView: React.FC<SaveViewProps> = ({
       return;
     }
     setCError(null);
+    if (tpl) {
+      setCName(tpl.name);
+      setCMembers(String(tpl.maxMembers));
+      setCAmount(tpl.contributionPi.toFixed(1));
+      setCCycle(tpl.cycle);
+      setCMode(tpl.payoutMode);
+      setCFoodPool(tpl.hasFoodPool);
+    } else {
+      setCName("");
+      setCMembers("8");
+      setCAmount("1.5");
+      setCCycle("Weekly");
+      setCMode("Rotation");
+      setCFoodPool(true);
+    }
     setCreateOpen(true);
+  };
+
+  const openEditCircleTemplate = (tpl: CircleTemplate) => {
+    setEditTpl(tpl);
+    setEtName(tpl.name);
+    setEtDesc(tpl.description);
+    setEtMembers(String(tpl.maxMembers));
+    setEtAmount(tpl.contributionPi.toFixed(1));
+    setEtCycle(tpl.cycle);
+    setEtMode(tpl.payoutMode);
+    setEtFood(tpl.hasFoodPool);
   };
 
   const handleJoinClick = (circleId: string) => {
@@ -173,7 +219,7 @@ export const SaveView: React.FC<SaveViewProps> = ({
         </div>
         <button
           type="button"
-          onClick={handleOpenCreate}
+          onClick={() => handleOpenCreate()}
           className="min-h-[48px] px-5 rounded-xl bg-[#7C3AED] text-white text-sm font-semibold hover:bg-[#6D28D9] transition-colors inline-flex items-center justify-center gap-2 whitespace-nowrap shrink-0"
         >
           <Plus className="w-4 h-4" />
@@ -230,28 +276,38 @@ export const SaveView: React.FC<SaveViewProps> = ({
         </div>
       )}
 
-      {/* Empty State or Active Circles */}
-      {circles.length === 0 ? (
-        <section className="rounded-2xl bg-white border border-slate-200 p-10 text-center space-y-4">
-          <div className="w-12 h-12 rounded-2xl bg-[#7C3AED]/10 text-[#7C3AED] flex items-center justify-center mx-auto">
-            <Landmark className="w-6 h-6" />
-          </div>
-          <h2 className="font-display text-xl font-bold text-slate-900">
-            No circles yet. Create your first circle.
+      {/* SECTION A: Live Circles By Real Users (Starts at 0) */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-xs">
+          <h2 className="font-display font-bold text-lg text-white">
+            Live Circles By Real Users ({circles.length})
           </h2>
-          <p className="text-sm text-slate-600 max-w-md mx-auto">
-            Create a transparent 5–20 member rotating savings circle (0.5 – 5.0 π weekly or monthly) with optional member-voted Emergency Food Pool.
-          </p>
-          <button
-            type="button"
-            onClick={handleOpenCreate}
-            className="min-h-[48px] px-6 rounded-xl bg-[#7C3AED] text-white text-sm font-semibold hover:bg-[#6D28D9] inline-flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Create Your First Circle</span>
-          </button>
-        </section>
-      ) : (
+          <span className="text-slate-400">
+            Real Pioneer-joined circles only
+          </span>
+        </div>
+
+        {circles.length === 0 ? (
+          <section className="rounded-2xl bg-white border border-slate-200 p-8 text-center space-y-3">
+            <div className="w-11 h-11 rounded-2xl bg-[#7C3AED]/10 text-[#7C3AED] flex items-center justify-center mx-auto">
+              <Landmark className="w-5 h-5" />
+            </div>
+            <h3 className="font-display text-lg font-bold text-slate-900">
+              No circles yet. Create your first circle.
+            </h3>
+            <p className="text-sm text-slate-600 max-w-md mx-auto">
+              Copy an Official Circle Template below or create your own transparent 5–20 member rotating savings circle (0.5 – 5.0 π weekly or monthly).
+            </p>
+            <button
+              type="button"
+              onClick={() => handleOpenCreate()}
+              className="min-h-[44px] px-5 rounded-xl bg-[#7C3AED] text-white text-xs font-semibold hover:bg-[#6D28D9] inline-flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Create Your First Circle</span>
+            </button>
+          </section>
+        ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           <div className="lg:col-span-4 space-y-3">
             {circles.map((circle) => {
@@ -581,6 +637,83 @@ export const SaveView: React.FC<SaveViewProps> = ({
           )}
         </div>
       )}
+      </div>
+
+      {/* SECTION B: Official Circle Templates — Copy To Create Your Real Circle */}
+      <section className="space-y-4 pt-2">
+        <div>
+          <h2 className="font-display font-bold text-lg text-white">
+            Official Circle Templates ({circleTemplates.length})
+          </h2>
+          <p className="text-xs text-slate-400">
+            Templates published by EYENEKA Official — not live circles and zero members until real users create and join.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {circleTemplates.map((tpl) => (
+            <div
+              key={tpl.id}
+              className="rounded-2xl bg-white border border-slate-200 p-5 flex flex-col justify-between gap-4"
+            >
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="px-1.5 py-0.5 rounded bg-[#050507] text-[#FFC800] text-[10px] font-bold">
+                    OFFICIAL STARTER
+                  </span>
+                  <span className="font-mono-tabular font-bold text-sm text-[#7C3AED]">
+                    {tpl.contributionPi.toFixed(1)} π / {tpl.cycle}
+                  </span>
+                </div>
+                <h3 className="font-display font-bold text-base text-slate-900">
+                  {tpl.name}
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed">{tpl.description}</p>
+                <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-[11px] text-slate-700 space-y-1 tabular-nums">
+                  <p>
+                    Template: {tpl.maxMembers} members max · {tpl.contributionPi.toFixed(1)} π {tpl.cycle.toLowerCase()} · {tpl.payoutMode} payout
+                    {tpl.hasFoodPool ? " · Includes Food Pool Vote" : ""}
+                  </p>
+                  <p className="text-slate-500">
+                    0 live members until real users join · Author: {tpl.author}
+                  </p>
+                  <p className="text-slate-500">
+                    Published: {tpl.publishedAt} · Completions: {tpl.completionsCount} · Reviews: {tpl.reviewsCount} · Earnings: {tpl.earningsPi} π
+                  </p>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 space-y-2">
+                <button
+                  type="button"
+                  onClick={() => handleOpenCreate(tpl)}
+                  className="min-h-[44px] w-full rounded-xl bg-[#7C3AED] text-white text-xs font-semibold hover:bg-[#6D28D9] transition-colors"
+                >
+                  Use This Template To Create Your Real Circle
+                </button>
+                {isAdmin && (
+                  <div className="flex items-center justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openEditCircleTemplate(tpl)}
+                      className="min-h-[32px] px-3 rounded-lg border border-slate-300 text-xs font-semibold text-slate-800 hover:bg-slate-50 inline-flex items-center gap-1"
+                    >
+                      <Pencil className="w-3 h-3" /> Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteCircleTemplate(tpl.id)}
+                      className="min-h-[32px] px-3 rounded-lg border border-red-200 text-xs font-semibold text-red-700 hover:bg-red-50 inline-flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3 h-3" /> Delete
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {/* Create Circle Modal */}
       {createOpen && (
@@ -691,6 +824,108 @@ export const SaveView: React.FC<SaveViewProps> = ({
                 className="min-h-[48px] w-full rounded-xl bg-[#7C3AED] text-white text-sm font-semibold hover:bg-[#6D28D9]"
               >
                 Create Circle (0% Interest)
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Edit Circle Template Modal */}
+      {editTpl && isAdmin && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-2xl border border-slate-200 overflow-hidden">
+            <div className="px-6 py-4 bg-[#050507] text-white flex items-center justify-between">
+              <h3 className="font-display font-bold text-base">Edit Circle Template (Admin)</h3>
+              <button
+                type="button"
+                onClick={() => setEditTpl(null)}
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-300 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!etName.trim()) return;
+                onUpdateCircleTemplate(editTpl.id, {
+                  name: etName.trim(),
+                  description: etDesc.trim(),
+                  maxMembers: Math.min(20, Math.max(5, Number(etMembers) || 10)),
+                  contributionPi: Math.min(5, Math.max(0.5, Number(etAmount) || 1.0)),
+                  cycle: etCycle,
+                  payoutMode: etMode,
+                  hasFoodPool: etFood,
+                });
+                setEditTpl(null);
+              }}
+              className="p-6 space-y-3.5"
+            >
+              <input
+                type="text"
+                value={etName}
+                onChange={(e) => setEtName(e.target.value)}
+                placeholder="Template Name"
+                className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-300 text-sm"
+              />
+              <textarea
+                rows={2}
+                value={etDesc}
+                onChange={(e) => setEtDesc(e.target.value)}
+                placeholder="Description"
+                className="w-full p-3 rounded-xl border border-slate-300 text-sm"
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="number"
+                  min="5"
+                  max="20"
+                  value={etMembers}
+                  onChange={(e) => setEtMembers(e.target.value)}
+                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-300 text-sm font-mono-tabular"
+                />
+                <input
+                  type="number"
+                  step="0.5"
+                  min="0.5"
+                  max="5"
+                  value={etAmount}
+                  onChange={(e) => setEtAmount(e.target.value)}
+                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-300 text-sm font-mono-tabular"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <select
+                  value={etCycle}
+                  onChange={(e) => setEtCycle(e.target.value as "Weekly" | "Monthly")}
+                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-300 text-sm"
+                >
+                  <option value="Weekly">Weekly</option>
+                  <option value="Monthly">Monthly</option>
+                </select>
+                <select
+                  value={etMode}
+                  onChange={(e) => setEtMode(e.target.value as "Rotation" | "Vote")}
+                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-300 text-sm"
+                >
+                  <option value="Rotation">Rotation</option>
+                  <option value="Vote">Vote</option>
+                </select>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={etFood}
+                  onChange={(e) => setEtFood(e.target.checked)}
+                  className="accent-[#16A34A]"
+                />
+                <span>Include Emergency Food Pool</span>
+              </label>
+              <button
+                type="submit"
+                className="min-h-[48px] w-full rounded-xl bg-[#7C3AED] text-white text-sm font-semibold hover:bg-[#6D28D9]"
+              >
+                Save Template Changes
               </button>
             </form>
           </div>

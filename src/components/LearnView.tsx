@@ -6,6 +6,7 @@ import {
   Download,
   GraduationCap,
   MessageSquare,
+  Pencil,
   Play,
   PlayCircle,
   Plus,
@@ -36,8 +37,11 @@ interface LearnViewProps {
   language: LanguageName;
   username: string;
   lowDataMode: boolean;
+  isAdmin: boolean;
   onSelectLesson: (id: string | null) => void;
   onPublishLesson: (lesson: Omit<Lesson, "id" | "publishedAt">) => void;
+  onUpdateLesson: (id: string, lesson: Omit<Lesson, "id" | "publishedAt">) => void;
+  onDeleteLesson: (id: string) => void;
   onToggleOffline: (lessonId: string) => void;
   onPassQuiz: (lesson: Lesson) => void;
   onMintCertificate: (lesson: Lesson, onMinted: (cert: CertificateRecord) => void) => void;
@@ -75,8 +79,11 @@ export const LearnView: React.FC<LearnViewProps> = ({
   language,
   username,
   lowDataMode,
+  isAdmin,
   onSelectLesson,
   onPublishLesson,
+  onUpdateLesson,
+  onDeleteLesson,
   onToggleOffline,
   onPassQuiz,
   onMintCertificate,
@@ -101,8 +108,9 @@ export const LearnView: React.FC<LearnViewProps> = ({
   const [mentorError, setMentorError] = useState<string | null>(null);
   const [mentorMessages, setMentorMessages] = useState<MentorMsg[]>([]);
 
-  // Create Lesson Modal state (5-10 steps + Quiz)
+  // Create / Edit Lesson Modal state (5-10 steps + Quiz)
   const [createOpen, setCreateOpen] = useState(false);
+  const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
   const [cTitle, setCTitle] = useState("");
   const [cTrack, setCTrack] = useState<SkillCategory>("AI Survival");
   const [cSkill, setCSkill] = useState("");
@@ -240,6 +248,40 @@ export const LearnView: React.FC<LearnViewProps> = ({
     }
   };
 
+  const openEditLessonModal = (lesson: Lesson) => {
+    setEditingLessonId(lesson.id);
+    setCTitle(lesson.title);
+    setCTrack(lesson.category);
+    setCSkill(lesson.skillUnlock);
+    setCDuration(String(lesson.durationMin));
+    setCCertFee(String(lesson.certificateFeePi));
+    setCSummary(lesson.summary);
+    setCSteps(lesson.sections.map((s) => ({ ...s })));
+    setCQuiz(lesson.quiz.map((q) => ({ ...q, options: [...q.options] })));
+    setCError(null);
+    setCreateOpen(true);
+  };
+
+  const openNewLessonModal = () => {
+    setEditingLessonId(null);
+    setCTitle("");
+    setCTrack("AI Survival");
+    setCSkill("");
+    setCDuration("10");
+    setCCertFee("0.3");
+    setCSummary("");
+    setCSteps([
+      { heading: "Step 1", body: "" },
+      { heading: "Step 2", body: "" },
+      { heading: "Step 3", body: "" },
+      { heading: "Step 4", body: "" },
+      { heading: "Step 5", body: "" },
+    ]);
+    setCQuiz([{ id: "q-1", question: "", options: ["", "", ""], correctIndex: 0 }]);
+    setCError(null);
+    setCreateOpen(true);
+  };
+
   const handlePublishSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setCError(null);
@@ -267,14 +309,19 @@ export const LearnView: React.FC<LearnViewProps> = ({
       return;
     }
 
-    onPublishLesson({
+    const existing = editingLessonId ? lessons.find((l) => l.id === editingLessonId) : undefined;
+    const payload: Omit<Lesson, "id" | "publishedAt"> = {
       title: cTitle.trim(),
       category: cTrack,
       skillUnlock: cSkill.trim(),
       durationMin: Number.isNaN(durationMin) || durationMin <= 0 ? 10 : durationMin,
       certificateFeePi: feePi,
       summary: cSummary.trim(),
-      creatorHandle: username ? `@${username}` : "Pioneer Creator",
+      creatorHandle: existing?.creatorHandle || (isAdmin ? "EYENEKA Official" : username ? `@${username}` : "Pioneer Creator"),
+      isOfficialStarter: existing?.isOfficialStarter ?? isAdmin,
+      completionsCount: existing?.completionsCount ?? 0,
+      reviewsCount: existing?.reviewsCount ?? 0,
+      earningsPi: existing?.earningsPi ?? 0,
       sections: validSteps.map((s) => ({ heading: s.heading.trim(), body: s.body.trim() })),
       quiz: validQuiz.map((q, i) => ({
         ...q,
@@ -282,20 +329,16 @@ export const LearnView: React.FC<LearnViewProps> = ({
         question: q.question.trim(),
         options: q.options.map((o) => o.trim()),
       })),
-    });
+    };
+
+    if (editingLessonId) {
+      onUpdateLesson(editingLessonId, payload);
+    } else {
+      onPublishLesson(payload);
+    }
 
     setCreateOpen(false);
-    setCTitle("");
-    setCSkill("");
-    setCSummary("");
-    setCSteps([
-      { heading: "Step 1", body: "" },
-      { heading: "Step 2", body: "" },
-      { heading: "Step 3", body: "" },
-      { heading: "Step 4", body: "" },
-      { heading: "Step 5", body: "" },
-    ]);
-    setCQuiz([{ id: "q-1", question: "", options: ["", "", ""], correctIndex: 0 }]);
+    setEditingLessonId(null);
   };
 
   const existingCert = activeLesson
@@ -328,10 +371,7 @@ export const LearnView: React.FC<LearnViewProps> = ({
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={() => {
-                setCError(null);
-                setCreateOpen(true);
-              }}
+              onClick={openNewLessonModal}
               className="min-h-[44px] px-4 py-2.5 rounded-xl bg-[#FFC800] text-[#050507] text-sm font-bold hover:bg-[#eab800] transition-colors inline-flex items-center gap-2 whitespace-nowrap"
             >
               <Plus className="w-4 h-4" />
@@ -408,10 +448,7 @@ export const LearnView: React.FC<LearnViewProps> = ({
           </p>
           <button
             type="button"
-            onClick={() => {
-              setCError(null);
-              setCreateOpen(true);
-            }}
+            onClick={openNewLessonModal}
             className="min-h-[48px] px-6 rounded-xl bg-[#FFC800] text-[#050507] text-sm font-bold hover:bg-[#eab800] inline-flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
@@ -433,39 +470,71 @@ export const LearnView: React.FC<LearnViewProps> = ({
                 const unlocked = earnedSkills.includes(lesson.skillUnlock);
                 const savedOffline = offlineLessonIds.includes(lesson.id);
                 return (
-                  <button
+                  <div
                     key={lesson.id}
-                    type="button"
-                    onClick={() => onSelectLesson(lesson.id)}
-                    className={`w-full text-left rounded-2xl p-4 border transition-colors ${
+                    className={`w-full rounded-2xl p-4 border transition-colors ${
                       selected
                         ? "bg-white border-[#7C3AED] ring-2 ring-[#7C3AED]/20"
                         : "bg-white border-slate-200 hover:border-slate-300"
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
-                      <span>
-                        {lesson.category} · {lesson.durationMin} min · {lesson.sections.length} steps
-                      </span>
-                      <span className="font-mono-tabular font-semibold text-[#7C3AED]">
-                        Cert {lesson.certificateFeePi.toFixed(2)} π
-                      </span>
-                    </div>
-                    <h3 className="mt-1.5 font-display font-bold text-base text-slate-900">
-                      {lesson.title}
-                    </h3>
-                    <p className="mt-1 text-xs text-slate-600 line-clamp-2">{lesson.summary}</p>
-                    <div className="mt-3 flex items-center justify-between text-xs">
-                      <span className={unlocked ? "text-[#16A34A] font-semibold" : "text-slate-500"}>
-                        {unlocked ? `Certified: ${lesson.skillUnlock}` : `Unlocks: ${lesson.skillUnlock}`}
-                      </span>
-                      {savedOffline && (
-                        <span className="text-slate-500 inline-flex items-center gap-1">
-                          <Download className="w-3 h-3" /> Offline
+                    <button
+                      type="button"
+                      onClick={() => onSelectLesson(lesson.id)}
+                      className="w-full text-left"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                        <span className="flex items-center gap-1.5 flex-wrap">
+                          {lesson.isOfficialStarter && (
+                            <span className="px-1.5 py-0.5 rounded bg-[#050507] text-[#FFC800] text-[10px] font-bold">
+                              OFFICIAL STARTER
+                            </span>
+                          )}
+                          <span>
+                            {lesson.category} · {lesson.durationMin} min · {lesson.sections.length} steps
+                          </span>
                         </span>
-                      )}
-                    </div>
-                  </button>
+                        <span className="font-mono-tabular font-semibold text-[#7C3AED] shrink-0">
+                          Cert {lesson.certificateFeePi.toFixed(2)} π
+                        </span>
+                      </div>
+                      <h3 className="mt-1.5 font-display font-bold text-base text-slate-900">
+                        {lesson.title}
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-600 line-clamp-2">{lesson.summary}</p>
+                      <p className="mt-2 text-[11px] text-slate-500 tabular-nums">
+                        {lesson.creatorHandle} · {lesson.publishedAt} · Completions: {lesson.completionsCount ?? 0} · Reviews: {lesson.reviewsCount ?? 0} · Earnings: {(lesson.earningsPi ?? 0).toFixed(0)} π
+                      </p>
+                      <div className="mt-2 flex items-center justify-between text-xs">
+                        <span className={unlocked ? "text-[#16A34A] font-semibold" : "text-slate-500"}>
+                          {unlocked ? `Certified: ${lesson.skillUnlock}` : `Unlocks: ${lesson.skillUnlock}`}
+                        </span>
+                        {savedOffline && (
+                          <span className="text-slate-500 inline-flex items-center gap-1">
+                            <Download className="w-3 h-3" /> Offline
+                          </span>
+                        )}
+                      </div>
+                    </button>
+                    {isAdmin && (
+                      <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openEditLessonModal(lesson)}
+                          className="min-h-[34px] px-3 rounded-lg border border-slate-300 text-xs font-semibold text-slate-800 hover:bg-slate-50 inline-flex items-center gap-1"
+                        >
+                          <Pencil className="w-3 h-3" /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDeleteLesson(lesson.id)}
+                          className="min-h-[34px] px-3 rounded-lg border border-red-200 text-xs font-semibold text-red-700 hover:bg-red-50 inline-flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3 h-3" /> Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 );
               })
             )}
@@ -476,14 +545,44 @@ export const LearnView: React.FC<LearnViewProps> = ({
             <div className="lg:col-span-7 rounded-2xl bg-white border border-slate-200 p-6 sm:p-8 space-y-6">
               <div className="flex flex-wrap items-start justify-between gap-4 pb-5 border-b border-slate-100">
                 <div className="space-y-1.5">
-                  <p className="text-xs font-medium text-[#7C3AED]">
-                    {activeLesson.category} · {activeLesson.durationMin} min · By {activeLesson.creatorHandle} · Free Lesson
-                  </p>
+                  <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-[#7C3AED]">
+                    {activeLesson.isOfficialStarter && (
+                      <span className="px-2 py-0.5 rounded bg-[#050507] text-[#FFC800] text-[10px] font-bold">
+                        OFFICIAL STARTER
+                      </span>
+                    )}
+                    <span>
+                      {activeLesson.category} · {activeLesson.durationMin} min · Author: {activeLesson.creatorHandle} · Free Lesson
+                    </span>
+                  </div>
                   <h2 className="font-display text-2xl font-bold text-slate-900">
                     {activeLesson.title}
                   </h2>
+                  <p className="text-xs text-slate-500 tabular-nums">
+                    Published: {activeLesson.publishedAt} · Completions: {activeLesson.completionsCount ?? 0} · Reviews: {activeLesson.reviewsCount ?? 0} · Earnings: {(activeLesson.earningsPi ?? 0).toFixed(0)} π
+                  </p>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  {isAdmin && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => openEditLessonModal(activeLesson)}
+                        className="min-h-[44px] px-3 rounded-xl border border-slate-300 text-xs font-semibold text-slate-800 hover:bg-slate-50 inline-flex items-center gap-1.5"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        <span>Edit</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteLesson(activeLesson.id)}
+                        className="min-h-[44px] px-3 rounded-xl border border-red-200 text-xs font-semibold text-red-700 hover:bg-red-50 inline-flex items-center gap-1.5"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Delete</span>
+                      </button>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={handleVoiceToggle}
@@ -683,7 +782,9 @@ export const LearnView: React.FC<LearnViewProps> = ({
           <div className="w-full sm:max-w-2xl bg-white rounded-t-3xl sm:rounded-2xl border border-slate-200 overflow-hidden max-h-[92vh] flex flex-col">
             <div className="px-6 py-4 bg-[#050507] text-white flex items-center justify-between">
               <div>
-                <h3 className="font-display font-bold text-base">Create & Publish Lesson</h3>
+                <h3 className="font-display font-bold text-base">
+                  {editingLessonId ? "Edit Lesson (Admin)" : "Create & Publish Lesson"}
+                </h3>
                 <p className="text-xs text-[#FFC800]">
                   Requires 5–10 lesson steps and a real skill verification quiz
                 </p>
@@ -935,7 +1036,7 @@ export const LearnView: React.FC<LearnViewProps> = ({
                 type="submit"
                 className="min-h-[48px] w-full rounded-xl bg-[#7C3AED] text-white text-sm font-semibold hover:bg-[#6D28D9]"
               >
-                Publish Free Lesson to Academy
+                {editingLessonId ? "Save Lesson Changes" : "Publish Free Lesson to Academy"}
               </button>
             </form>
           </div>

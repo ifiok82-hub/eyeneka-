@@ -40,11 +40,32 @@ export interface Lesson {
   summary: string;
   creatorHandle: string;
   publishedAt: string;
+  isOfficialStarter?: boolean;
+  completionsCount?: number;
+  reviewsCount?: number;
+  earningsPi?: number;
   sections: { heading: string; body: string }[];
   quiz: QuizQuestion[];
 }
 
 export type GigCategory = "Remote Digital" | "Local Help" | "Community";
+
+export interface GigTemplate {
+  id: string;
+  title: string;
+  category: GigCategory;
+  requiredSkill: string;
+  description: string;
+  deadline: string;
+  pricePi: number;
+  checklist: string[];
+  author: string;
+  publishedAt: string;
+  isOfficialStarter: boolean;
+  completionsCount: number;
+  reviewsCount: number;
+  earningsPi: number;
+}
 
 export type EscrowStatus =
   | "Open"
@@ -96,7 +117,14 @@ export interface FirstAidGuide {
   urgency: "Urgent Action" | "Careful Monitoring";
   summary: string;
   imageUrl?: string;
+  imagePlaceholderLabel?: string;
   publishedBy: string;
+  publishedAt: string;
+  isOfficialStarter?: boolean;
+  viewsCount: number;
+  completionsCount: number;
+  reviewsCount: number;
+  earningsPi: number;
   steps: string[];
   seekHelpWhen: string;
 }
@@ -162,6 +190,23 @@ export interface CircleMessage {
   sender: string;
   text: string;
   timestamp: string;
+}
+
+export interface CircleTemplate {
+  id: string;
+  name: string;
+  description: string;
+  maxMembers: number;
+  contributionPi: number;
+  cycle: "Weekly" | "Monthly";
+  payoutMode: "Rotation" | "Vote";
+  hasFoodPool: boolean;
+  author: string;
+  publishedAt: string;
+  isOfficialStarter: boolean;
+  completionsCount: number;
+  reviewsCount: number;
+  earningsPi: number;
 }
 
 export interface SavingsCircle {

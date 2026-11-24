@@ -4,13 +4,16 @@ import {
   Baby,
   CheckCircle2,
   HeartPulse,
+  ImagePlus,
   MapPin,
   MessageCircleHeart,
+  Pencil,
   Pill,
   Plus,
   ShieldAlert,
   Star,
   Stethoscope,
+  Trash2,
   Volume2,
   Wind,
   X,
@@ -31,7 +34,11 @@ interface CareViewProps {
   peerMessages: PeerListenerMessage[];
   username: string;
   lowDataMode: boolean;
-  onPublishGuide: (guide: Omit<FirstAidGuide, "id">) => void;
+  isAdmin: boolean;
+  onPublishGuide: (guide: Omit<FirstAidGuide, "id" | "publishedAt">) => void;
+  onUpdateGuide: (id: string, guide: Omit<FirstAidGuide, "id" | "publishedAt">) => void;
+  onDeleteGuide: (id: string) => void;
+  onIncrementGuideView: (id: string) => void;
   onAddResource: (res: Omit<CareResource, "id" | "rating" | "reviewCount">) => void;
   onRateResource: (resourceId: string, stars: number) => void;
   onRegisterCarePartner: (partner: {
@@ -51,23 +58,122 @@ interface CareViewProps {
 }
 
 type CareSubTab = "symptoms" | "firstaid" | "findcare" | "family" | "wellness";
+type SymptomPathKey = "fever" | "stomach" | "breathing";
 
 interface SymptomOption {
   id: string;
   label: string;
   level: "red" | "yellow" | "green";
+  nextStep: string;
 }
 
-const SYMPTOMS: SymptomOption[] = [
-  { id: "breathing", label: "Trouble breathing or bluish lips", level: "red" },
-  { id: "chest", label: "Severe chest pain or sudden fainting", level: "red" },
-  { id: "infant_fever", label: "Fever in baby under 3 months", level: "red" },
-  { id: "bleeding", label: "Heavy bleeding that will not slow down", level: "red" },
-  { id: "fever_3day", label: "Fever lasting more than 48–72 hours", level: "yellow" },
-  { id: "vomiting", label: "Repeated vomiting or unable to keep fluids down", level: "yellow" },
-  { id: "ear_rash", label: "New widespread rash or painful earache", level: "yellow" },
-  { id: "mild_cold", label: "Mild runny nose or light cough (alert & drinking)", level: "green" },
-  { id: "mild_ache", label: "Mild headache or tiredness after busy day", level: "green" },
+interface SymptomPathConfig {
+  key: SymptomPathKey;
+  title: string;
+  subtitle: string;
+  questions: SymptomOption[];
+}
+
+const SYMPTOM_PATHS: SymptomPathConfig[] = [
+  {
+    key: "fever",
+    title: "Fever Path",
+    subtitle: "Check fever duration, age, and warning signs — guidance only, no diagnosis.",
+    questions: [
+      {
+        id: "fev_infant",
+        label: "Fever in a baby under 3 months old",
+        level: "red",
+        nextStep: "Take the baby to an emergency clinic or hospital immediately.",
+      },
+      {
+        id: "fev_seizure",
+        label: "Fever with stiff neck, fits/seizures, extreme drowsiness, or non-fading rash",
+        level: "red",
+        nextStep: "Seek emergency clinical care immediately.",
+      },
+      {
+        id: "fev_48h",
+        label: "Fever lasting longer than 48–72 hours or rising despite rest",
+        level: "yellow",
+        nextStep: "Arrange a clinic or health-worker checkup within 24 hours and keep hydrating.",
+      },
+      {
+        id: "fev_chills",
+        label: "Moderate fever with body aches while still drinking fluids cleanly",
+        level: "yellow",
+        nextStep: "Monitor temperature, sip clean fluids, and consult a clinician if not improving.",
+      },
+      {
+        id: "fev_mild",
+        label: "Mild warmth (< 24h) while alert, responsive, and drinking water well",
+        level: "green",
+        nextStep: "Rest in light clothing, hydrate frequently, and seek professional care if symptoms worsen.",
+      },
+    ],
+  },
+  {
+    key: "stomach",
+    title: "Stomach Pain / Diarrhoea Path",
+    subtitle: "Check fluid loss and abdominal danger signs — guidance only, no diagnosis.",
+    questions: [
+      {
+        id: "stom_blood",
+        label: "Blood in stool/vomit, or severe sharp sudden belly pain",
+        level: "red",
+        nextStep: "Seek emergency hospital or urgent clinic evaluation immediately.",
+      },
+      {
+        id: "stom_dehyd",
+        label: "Cannot keep any sips down, sunken eyes, or no urine for 6–8 hours",
+        level: "red",
+        nextStep: "Urgent dehydration care is needed—visit a clinic or emergency service right away.",
+      },
+      {
+        id: "stom_2day",
+        label: "Loose stools or repeated vomiting lasting over 24–48 hours",
+        level: "yellow",
+        nextStep: "Start small sips of clean WHO Oral Rehydration Solution (ORS) and arrange a clinic visit.",
+      },
+      {
+        id: "stom_mild",
+        label: "Mild cramping or 1–2 loose stools while able to drink ORS and fluids comfortably",
+        level: "green",
+        nextStep: "Sip clean water or ORS slowly, eat plain light foods, and seek care if pain worsens.",
+      },
+    ],
+  },
+  {
+    key: "breathing",
+    title: "Cough / Breathing Path",
+    subtitle: "Check breathing effort and airway warning signs — guidance only, no diagnosis.",
+    questions: [
+      {
+        id: "br_labor",
+        label: "Fast or labored breathing, chest pulling in, bluish lips, or unable to speak full sentences",
+        level: "red",
+        nextStep: "Call emergency services or get to the nearest emergency clinic immediately.",
+      },
+      {
+        id: "br_chestpain",
+        label: "Cough accompanied by severe chest pain or coughing up blood",
+        level: "red",
+        nextStep: "Seek urgent clinical assessment immediately.",
+      },
+      {
+        id: "br_persist",
+        label: "Persistent cough lasting over 7–14 days, wheezing, or recurring night fever",
+        level: "yellow",
+        nextStep: "Schedule a prompt medical checkup within 24–48 hours.",
+      },
+      {
+        id: "br_mild",
+        label: "Mild runny nose, scratchy throat, or occasional light cough with normal easy breathing",
+        level: "green",
+        nextStep: "Rest, stay hydrated with warm clean fluids, and seek professional care if breathing changes.",
+      },
+    ],
+  },
 ];
 
 const VACCINE_MILESTONES = [
@@ -87,7 +193,11 @@ export const CareView: React.FC<CareViewProps> = ({
   peerMessages,
   username,
   lowDataMode,
+  isAdmin,
   onPublishGuide,
+  onUpdateGuide,
+  onDeleteGuide,
+  onIncrementGuideView,
   onAddResource,
   onRateResource,
   onRegisterCarePartner,
@@ -100,11 +210,13 @@ export const CareView: React.FC<CareViewProps> = ({
   onRecordHealthCheck,
 }) => {
   const [subTab, setSubTab] = useState<CareSubTab>("symptoms");
+  const [activePathKey, setActivePathKey] = useState<SymptomPathKey>("fever");
   const [pickedSymptoms, setPickedSymptoms] = useState<string[]>([]);
   const [activeGuideId, setActiveGuideId] = useState<string>(guides[0]?.id ?? "");
 
-  // Admin First Aid Guide Publisher state
+  // Admin First Aid Guide Publisher / Editor state
   const [guideOpen, setGuideOpen] = useState(false);
+  const [editingGuideId, setEditingGuideId] = useState<string | null>(null);
   const [gTitle, setGTitle] = useState("");
   const [gUrgency, setGUrgency] = useState<FirstAidGuide["urgency"]>("Urgent Action");
   const [gSummary, setGSummary] = useState("");
@@ -159,8 +271,9 @@ export const CareView: React.FC<CareViewProps> = ({
   }, [breathingActive]);
 
   const activeGuide = guides.find((g) => g.id === activeGuideId) ?? guides[0] ?? null;
+  const activePath = SYMPTOM_PATHS.find((p) => p.key === activePathKey) ?? SYMPTOM_PATHS[0];
+  const selectedList = activePath.questions.filter((s) => pickedSymptoms.includes(s.id));
 
-  const selectedList = SYMPTOMS.filter((s) => pickedSymptoms.includes(s.id));
   const triageLevel: "red" | "yellow" | "green" | null =
     selectedList.length === 0
       ? null
@@ -169,6 +282,15 @@ export const CareView: React.FC<CareViewProps> = ({
       : selectedList.some((s) => s.level === "yellow")
       ? "yellow"
       : "green";
+
+  const recommendedNextStep =
+    triageLevel === "red"
+      ? selectedList.find((s) => s.level === "red")?.nextStep
+      : triageLevel === "yellow"
+      ? selectedList.find((s) => s.level === "yellow")?.nextStep
+      : triageLevel === "green"
+      ? selectedList.find((s) => s.level === "green")?.nextStep
+      : null;
 
   const speakGuide = (guide: FirstAidGuide) => {
     if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
@@ -188,6 +310,32 @@ export const CareView: React.FC<CareViewProps> = ({
       ? "Hold softly (4s)"
       : "Breathe out slowly (6s)";
 
+  const openNewGuideModal = () => {
+    setEditingGuideId(null);
+    setGTitle("");
+    setGUrgency("Urgent Action");
+    setGSummary("");
+    setGStepsText("");
+    setGSeekHelp("");
+    setGImageDataUrl(undefined);
+    setGImageName("");
+    setGError(null);
+    setGuideOpen(true);
+  };
+
+  const openEditGuideModal = (guide: FirstAidGuide) => {
+    setEditingGuideId(guide.id);
+    setGTitle(guide.title);
+    setGUrgency(guide.urgency);
+    setGSummary(guide.summary);
+    setGStepsText(guide.steps.join("\n"));
+    setGSeekHelp(guide.seekHelpWhen);
+    setGImageDataUrl(guide.imageUrl);
+    setGImageName(guide.imageUrl ? "Uploaded image" : "");
+    setGError(null);
+    setGuideOpen(true);
+  };
+
   const handlePublishGuideSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setGError(null);
@@ -199,22 +347,29 @@ export const CareView: React.FC<CareViewProps> = ({
       setGError("Complete title, summary, at least 1 step, and urgent care warning.");
       return;
     }
-    onPublishGuide({
+    const existing = editingGuideId ? guides.find((g) => g.id === editingGuideId) : undefined;
+    const payload: Omit<FirstAidGuide, "id" | "publishedAt"> = {
       title: gTitle.trim(),
       urgency: gUrgency,
       summary: gSummary.trim(),
       imageUrl: gImageDataUrl,
-      publishedBy: username ? `@${username}` : "Admin",
+      imagePlaceholderLabel: gImageDataUrl ? undefined : existing?.imagePlaceholderLabel,
+      publishedBy: existing?.publishedBy || "EYENEKA Official",
+      isOfficialStarter: existing?.isOfficialStarter ?? isAdmin,
+      viewsCount: existing?.viewsCount ?? 0,
+      completionsCount: existing?.completionsCount ?? 0,
+      reviewsCount: existing?.reviewsCount ?? 0,
+      earningsPi: existing?.earningsPi ?? 0,
       steps,
       seekHelpWhen: gSeekHelp.trim(),
-    });
+    };
+    if (editingGuideId) {
+      onUpdateGuide(editingGuideId, payload);
+    } else {
+      onPublishGuide(payload);
+    }
     setGuideOpen(false);
-    setGTitle("");
-    setGSummary("");
-    setGStepsText("");
-    setGSeekHelp("");
-    setGImageDataUrl(undefined);
-    setGImageName("");
+    setEditingGuideId(null);
   };
 
   return (
@@ -257,20 +412,43 @@ export const CareView: React.FC<CareViewProps> = ({
         ))}
       </div>
 
-      {/* 1. Symptom Checker */}
+      {/* 1. Symptom Checker — 3 Real Guided Paths */}
       {subTab === "symptoms" && (
         <section className="grid grid-cols-1 lg:grid-cols-12 gap-6">
           <div className="lg:col-span-7 rounded-2xl bg-white border border-slate-200 p-6 space-y-4">
-            <div>
-              <h2 className="font-display text-xl font-bold text-slate-900">
-                Everyday Symptom Navigation (Red / Yellow / Green)
-              </h2>
-              <p className="text-sm text-slate-600">
-                Select any current signs to view educational urgency guidance. No diagnosis is given.
-              </p>
+            <div className="space-y-3">
+              <div>
+                <h2 className="font-display text-xl font-bold text-slate-900">
+                  3 Symptom Navigation Paths (Red / Yellow / Green)
+                </h2>
+                <p className="text-sm text-slate-600">
+                  Choose a path below and check any signs. Guidance only — no diagnosis. Seek professional care.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {SYMPTOM_PATHS.map((path) => (
+                  <button
+                    key={path.key}
+                    type="button"
+                    onClick={() => {
+                      setActivePathKey(path.key);
+                      setPickedSymptoms([]);
+                    }}
+                    className={`min-h-[40px] px-3.5 rounded-xl text-xs font-semibold transition-colors ${
+                      activePathKey === path.key
+                        ? "bg-[#16A34A] text-white"
+                        : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                    }`}
+                  >
+                    {path.title}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-slate-500">{activePath.subtitle}</p>
             </div>
+
             <div className="space-y-2">
-              {SYMPTOMS.map((sym) => {
+              {activePath.questions.map((sym) => {
                 const checked = pickedSymptoms.includes(sym.id);
                 return (
                   <label
@@ -302,11 +480,11 @@ export const CareView: React.FC<CareViewProps> = ({
 
           <div className="lg:col-span-5 rounded-2xl bg-white border border-slate-200 p-6 space-y-4">
             <h3 className="font-display text-lg font-bold text-slate-900">
-              Navigation Guidance
+              {activePath.title} Result & Next Step
             </h3>
             {!triageLevel && (
               <div className="rounded-xl bg-slate-50 border border-slate-200 p-5 text-sm text-slate-600">
-                Select one or more signs on the left to view Red / Yellow / Green navigation guidance.
+                Answer the {activePath.title} questions on the left to see Red / Yellow / Green navigation and your next step.
               </div>
             )}
 
@@ -316,8 +494,8 @@ export const CareView: React.FC<CareViewProps> = ({
                   <AlertCircle className="w-5 h-5" />
                   <span>RED · Seek Professional Care Immediately</span>
                 </div>
-                <p className="text-sm text-red-900">
-                  Selected warning signs require immediate medical evaluation. Contact emergency medical services or visit the nearest clinic right away.
+                <p className="text-sm text-red-900 font-medium">
+                  Next Step: {recommendedNextStep}
                 </p>
               </div>
             )}
@@ -326,10 +504,10 @@ export const CareView: React.FC<CareViewProps> = ({
               <div className="rounded-xl bg-amber-50 border border-amber-300 p-5 space-y-2">
                 <div className="flex items-center gap-2 text-amber-800 font-display font-bold text-base">
                   <AlertCircle className="w-5 h-5" />
-                  <span>YELLOW · Arrange Clinic Evaluation Within 24 Hours</span>
+                  <span>YELLOW · Clinic Evaluation Within 24 Hours</span>
                 </div>
-                <p className="text-sm text-amber-950">
-                  Rest, maintain safe fluids, and visit a qualified clinician within 24 hours. Seek urgent care sooner if symptoms worsen.
+                <p className="text-sm text-amber-950 font-medium">
+                  Next Step: {recommendedNextStep}
                 </p>
               </div>
             )}
@@ -340,42 +518,41 @@ export const CareView: React.FC<CareViewProps> = ({
                   <CheckCircle2 className="w-5 h-5" />
                   <span>GREEN · Monitor Closely & Rest</span>
                 </div>
-                <p className="text-sm text-slate-800">
-                  Mild signs may improve with clean hydration and rest. Seek professional medical care if symptoms persist or worsen.
+                <p className="text-sm text-slate-800 font-medium">
+                  Next Step: {recommendedNextStep}
                 </p>
               </div>
             )}
 
             <p className="text-xs text-slate-500 pt-2 border-t border-slate-100">
-              EYENEKA is education and navigation, not medical diagnosis. Seek professional care.
+              No diagnosis. EYENEKA is education and navigation only — always seek professional care.
             </p>
           </div>
         </section>
       )}
 
-      {/* 2. First Aid Library (Empty until Admin publishes real guides) */}
+      {/* 2. First Aid Library (5 Official Guides + Admin Edit/Delete) */}
       {subTab === "firstaid" && (
         <section className="space-y-4">
           <div className="rounded-2xl bg-white border border-slate-200 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h2 className="font-display font-bold text-lg text-slate-900">
-                First Aid Library
+                First Aid Library ({guides.length} Official Guides)
               </h2>
               <p className="text-xs text-slate-600">
-                Published step-by-step guides with admin-uploaded educational illustrations.
+                Published by EYENEKA Official. Numbered steps with emergency warnings; editable and deletable by admin.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setGError(null);
-                setGuideOpen(true);
-              }}
-              className="min-h-[44px] px-4 rounded-xl bg-[#16A34A] text-white text-xs font-semibold hover:bg-[#15803D] inline-flex items-center gap-2 whitespace-nowrap shrink-0"
-            >
-              <Plus className="w-4 h-4" />
-              <span>Publish First Aid Guide (Admin)</span>
-            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={openNewGuideModal}
+                className="min-h-[44px] px-4 rounded-xl bg-[#16A34A] text-white text-xs font-semibold hover:bg-[#15803D] inline-flex items-center gap-2 whitespace-nowrap shrink-0"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Publish First Aid Guide (Admin)</span>
+              </button>
+            )}
           </div>
 
           {guides.length === 0 ? (
@@ -385,49 +562,114 @@ export const CareView: React.FC<CareViewProps> = ({
                 No first aid guides published yet.
               </p>
               <p className="text-sm text-slate-600 max-w-md mx-auto">
-                The First Aid Library stays empty until an admin publishes verified step-by-step guides with uploaded pictures.
+                Publish a step-by-step first aid guide with urgent care warnings and optional picture upload.
               </p>
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
               <div className="lg:col-span-4 space-y-2.5">
                 {guides.map((g) => (
-                  <button
+                  <div
                     key={g.id}
-                    type="button"
-                    onClick={() => setActiveGuideId(g.id)}
-                    className={`w-full text-left rounded-2xl p-4 border transition-colors ${
+                    className={`w-full rounded-2xl p-4 border transition-colors ${
                       g.id === activeGuide?.id
                         ? "bg-white border-[#16A34A] ring-2 ring-[#22C55E]/20"
                         : "bg-white border-slate-200 hover:border-slate-300"
                     }`}
                   >
-                    <p className="text-xs font-medium text-slate-500">{g.urgency}</p>
-                    <p className="mt-1 font-display font-bold text-base text-slate-900">{g.title}</p>
-                    <p className="mt-1 text-xs text-slate-600 line-clamp-2">{g.summary}</p>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveGuideId(g.id);
+                        onIncrementGuideView(g.id);
+                      }}
+                      className="w-full text-left"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        {g.isOfficialStarter && (
+                          <span className="px-1.5 py-0.5 rounded bg-[#050507] text-[#FFC800] text-[10px] font-bold">
+                            OFFICIAL STARTER
+                          </span>
+                        )}
+                        <span className="font-medium text-slate-500">{g.urgency}</span>
+                      </div>
+                      <p className="mt-1.5 font-display font-bold text-base text-slate-900">{g.title}</p>
+                      <p className="mt-1 text-xs text-slate-600 line-clamp-2">{g.summary}</p>
+                      <p className="mt-2 text-[11px] text-slate-500 tabular-nums">
+                        Author: {g.publishedBy} · {g.publishedAt} · Views: {g.viewsCount}
+                      </p>
+                    </button>
+                    {isAdmin && (
+                      <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-end gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openEditGuideModal(g)}
+                          className="min-h-[32px] px-3 rounded-lg border border-slate-300 text-xs font-semibold text-slate-800 hover:bg-slate-50 inline-flex items-center gap-1"
+                        >
+                          <Pencil className="w-3 h-3" /> Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onDeleteGuide(g.id)}
+                          className="min-h-[32px] px-3 rounded-lg border border-red-200 text-xs font-semibold text-red-700 hover:bg-red-50 inline-flex items-center gap-1"
+                        >
+                          <Trash2 className="w-3 h-3" /> Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 ))}
               </div>
 
               {activeGuide && (
                 <div className="lg:col-span-8 rounded-2xl bg-white border border-slate-200 p-6 sm:p-8 space-y-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="text-xs font-semibold text-[#16A34A]">
-                        {activeGuide.urgency} · Published by {activeGuide.publishedBy}
-                      </p>
+                    <div className="space-y-1">
+                      <div className="flex flex-wrap items-center gap-2 text-xs font-semibold text-[#16A34A]">
+                        {activeGuide.isOfficialStarter && (
+                          <span className="px-2 py-0.5 rounded bg-[#050507] text-[#FFC800] text-[10px] font-bold">
+                            OFFICIAL STARTER
+                          </span>
+                        )}
+                        <span>
+                          {activeGuide.urgency} · Author: {activeGuide.publishedBy}
+                        </span>
+                      </div>
                       <h3 className="font-display text-2xl font-bold text-slate-900">
                         {activeGuide.title}
                       </h3>
+                      <p className="text-xs text-slate-500 tabular-nums">
+                        Published: {activeGuide.publishedAt} · Views: {activeGuide.viewsCount} · Completions: {activeGuide.completionsCount} · Reviews: {activeGuide.reviewsCount} · Earnings: {activeGuide.earningsPi} π
+                      </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => speakGuide(activeGuide)}
-                      className="min-h-[44px] px-4 rounded-xl border border-slate-300 text-xs font-semibold text-slate-800 hover:bg-slate-50 inline-flex items-center gap-2"
-                    >
-                      <Volume2 className="w-4 h-4" />
-                      <span>Read Steps Aloud</span>
-                    </button>
+                    <div className="flex flex-wrap gap-2">
+                      {isAdmin && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => openEditGuideModal(activeGuide)}
+                            className="min-h-[44px] px-3 rounded-xl border border-slate-300 text-xs font-semibold text-slate-800 hover:bg-slate-50 inline-flex items-center gap-1.5"
+                          >
+                            <Pencil className="w-3.5 h-3.5" /> Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => onDeleteGuide(activeGuide.id)}
+                            className="min-h-[44px] px-3 rounded-xl border border-red-200 text-xs font-semibold text-red-700 hover:bg-red-50 inline-flex items-center gap-1.5"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" /> Delete
+                          </button>
+                        </>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => speakGuide(activeGuide)}
+                        className="min-h-[44px] px-4 rounded-xl border border-slate-300 text-xs font-semibold text-slate-800 hover:bg-slate-50 inline-flex items-center gap-2"
+                      >
+                        <Volume2 className="w-4 h-4" />
+                        <span>Read Steps Aloud</span>
+                      </button>
+                    </div>
                   </div>
 
                   {!lowDataMode && activeGuide.imageUrl && (
@@ -437,6 +679,24 @@ export const CareView: React.FC<CareViewProps> = ({
                         alt={activeGuide.title}
                         className="w-full h-64 object-contain bg-white"
                       />
+                    </div>
+                  )}
+
+                  {!activeGuide.imageUrl && activeGuide.imagePlaceholderLabel && (
+                    <div className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-6 text-center space-y-2">
+                      <ImagePlus className="w-6 h-6 text-slate-400 mx-auto" />
+                      <p className="text-xs font-medium text-slate-600">
+                        {activeGuide.imagePlaceholderLabel}
+                      </p>
+                      {isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => openEditGuideModal(activeGuide)}
+                          className="min-h-[36px] px-3.5 rounded-lg bg-slate-900 text-white text-xs font-semibold"
+                        >
+                          Upload Picture (Admin)
+                        </button>
+                      )}
                     </div>
                   )}
 
@@ -455,7 +715,7 @@ export const CareView: React.FC<CareViewProps> = ({
                   </ol>
 
                   <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-xs sm:text-sm text-red-900">
-                    <strong className="font-semibold">When to seek urgent care: </strong>
+                    <strong className="font-semibold">Seek professional care if Red symptoms: </strong>
                     {activeGuide.seekHelpWhen}
                   </div>
                 </div>
@@ -463,12 +723,14 @@ export const CareView: React.FC<CareViewProps> = ({
             </div>
           )}
 
-          {/* Admin Publish First Aid Guide Modal */}
-          {guideOpen && (
+          {/* Admin Publish / Edit First Aid Guide Modal */}
+          {guideOpen && isAdmin && (
             <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
               <div className="w-full sm:max-w-lg bg-white rounded-t-3xl sm:rounded-2xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
                 <div className="px-6 py-4 bg-[#050507] text-white flex items-center justify-between">
-                  <h3 className="font-display font-bold text-base">Publish First Aid Guide (Admin)</h3>
+                  <h3 className="font-display font-bold text-base">
+                    {editingGuideId ? "Edit First Aid Guide (Admin)" : "Publish First Aid Guide (Admin)"}
+                  </h3>
                   <button
                     type="button"
                     onClick={() => setGuideOpen(false)}
@@ -549,7 +811,7 @@ export const CareView: React.FC<CareViewProps> = ({
                     type="submit"
                     className="min-h-[48px] w-full rounded-xl bg-[#16A34A] text-white text-sm font-semibold hover:bg-[#15803D]"
                   >
-                    Publish Guide
+                    {editingGuideId ? "Save Guide Changes" : "Publish Guide"}
                   </button>
                 </form>
               </div>

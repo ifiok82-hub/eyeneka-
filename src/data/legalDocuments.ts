@@ -121,8 +121,8 @@ export const LEGAL_DOCUMENTS: LegalDocument[] = [
         body: "• Gig Escrow Fee (8%): Charged only on real completed gigs (e.g., 1.50 π - 0.12 π fee = 1.38 π worker payout).\n• Verified Certificates (0.10 – 0.50 π): Charged only when a Pioneer mints a real Verified Certificate after passing a free skill test.\n• Featured Gig Boost (0.20 π / 24h): Optional boost for real gigs.\n• Circle Leader Premium (0.50 π / month): Unlocks 3 circles, auto-reminders, and CSV export.\n• Pi Ads: Official Pi.Ads.showAd in Home and Learn — Ads support free learning.\n• Verified Care Partner Listing (0.50 π / month): Applied only after credential document review and approval.",
       },
       {
-        heading: "3. Escrow Custody Guarantee",
-        body: "EYENEKA does not hold user Pi except in escrow for active gigs. Escrow releases only on proof + approval or dispute decision.",
+        heading: "3. Escrow Custody & Official Starter Products",
+        body: "EYENEKA does not hold user Pi except in escrow for active gigs. Escrow releases only on proof + approval or dispute decision. Starter products are published by EYENEKA Official. No fake user activity is shown.",
       },
     ],
   },

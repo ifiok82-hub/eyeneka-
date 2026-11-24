@@ -7,30 +7,36 @@ import {
   Lock,
   MessageSquare,
   Paperclip,
+  Pencil,
   Plus,
   Search,
   Send,
   ShieldCheck,
   Sparkles,
   Star,
+  Trash2,
   Unlock,
   X,
 } from "lucide-react";
-import { Gig, GigCategory } from "../types";
+import { Gig, GigCategory, GigTemplate } from "../types";
 
 interface WorkViewProps {
   gigs: Gig[];
+  gigTemplates: GigTemplate[];
   availableSkillOptions: string[];
   selectedGigId: string | null;
   earnedSkills: string[];
   username: string;
   trustScore: number;
   kycVerified: boolean;
+  isAdmin: boolean;
   onSelectGig: (gigId: string | null) => void;
   onCreateGig: (
     gig: Omit<Gig, "id" | "status" | "messages">,
     boost24h: boolean
   ) => void;
+  onUpdateTemplate: (id: string, updated: Partial<GigTemplate>) => void;
+  onDeleteTemplate: (id: string) => void;
   onLockEscrow: (gigId: string) => void;
   onSubmitProof: (
     gigId: string,
@@ -86,14 +92,18 @@ function calcEscrowSplit(pricePi: number) {
 
 export const WorkView: React.FC<WorkViewProps> = ({
   gigs,
+  gigTemplates,
   availableSkillOptions,
   selectedGigId,
   earnedSkills,
   username,
   trustScore,
   kycVerified,
+  isAdmin,
   onSelectGig,
   onCreateGig,
+  onUpdateTemplate,
+  onDeleteTemplate,
   onLockEscrow,
   onSubmitProof,
   onReleaseEscrow,
@@ -130,6 +140,40 @@ export const WorkView: React.FC<WorkViewProps> = ({
   const [newChecklistText, setNewChecklistText] = useState("");
   const [postError, setPostError] = useState<string | null>(null);
 
+  // Admin Edit Template modal state
+  const [editTpl, setEditTpl] = useState<GigTemplate | null>(null);
+  const [etTitle, setEtTitle] = useState("");
+  const [etCat, setEtCat] = useState<GigCategory>("Remote Digital");
+  const [etSkill, setEtSkill] = useState("");
+  const [etPrice, setEtPrice] = useState("1.0");
+  const [etDeadline, setEtDeadline] = useState("48 hours");
+  const [etDesc, setEtDesc] = useState("");
+  const [etChecklist, setEtChecklist] = useState("");
+
+  const openPostFromTemplate = (tpl: GigTemplate) => {
+    setPostError(null);
+    setNewTitle(tpl.title);
+    setNewCategory(tpl.category);
+    setNewSkill(tpl.requiredSkill);
+    setNewDesc(tpl.description);
+    setNewDeadline(tpl.deadline);
+    setNewPrice(tpl.pricePi.toFixed(1));
+    setNewChecklistText(tpl.checklist.join("\n"));
+    setBoost24h(false);
+    setPostOpen(true);
+  };
+
+  const openEditTemplateModal = (tpl: GigTemplate) => {
+    setEditTpl(tpl);
+    setEtTitle(tpl.title);
+    setEtCat(tpl.category);
+    setEtSkill(tpl.requiredSkill);
+    setEtPrice(tpl.pricePi.toFixed(1));
+    setEtDeadline(tpl.deadline);
+    setEtDesc(tpl.description);
+    setEtChecklist(tpl.checklist.join("\n"));
+  };
+
   const filteredGigs = gigs
     .filter((g) => {
       const matchCat = filter === "All" || g.category === filter;
@@ -144,6 +188,17 @@ export const WorkView: React.FC<WorkViewProps> = ({
     })
     .slice()
     .sort((a, b) => Number(Boolean(b.featured)) - Number(Boolean(a.featured)));
+
+  const filteredTemplates = gigTemplates.filter((t) => {
+    const matchCat = filter === "All" || t.category === filter;
+    const q = search.trim().toLowerCase();
+    const matchQuery =
+      !q ||
+      t.title.toLowerCase().includes(q) ||
+      t.requiredSkill.toLowerCase().includes(q) ||
+      t.description.toLowerCase().includes(q);
+    return matchCat && matchQuery;
+  });
 
   const parsedNewPrice = Number(newPrice) || 0;
   const previewSplit = calcEscrowSplit(parsedNewPrice);
@@ -307,128 +362,228 @@ export const WorkView: React.FC<WorkViewProps> = ({
         </div>
       </section>
 
-      {/* Empty State or Real Gig Grid */}
-      {gigs.length === 0 ? (
-        <section className="rounded-2xl bg-white border border-slate-200 p-10 text-center space-y-4">
-          <div className="w-12 h-12 rounded-2xl bg-[#FFC800]/20 text-slate-900 flex items-center justify-center mx-auto">
-            <Briefcase className="w-6 h-6" />
-          </div>
-          <h2 className="font-display text-xl font-bold text-slate-900">
-            No gigs yet. Be the first to post a gig.
+      {/* SECTION A: Live Gigs By Real Users (Starts at 0 — Never Mixed With Templates) */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between text-xs">
+          <h2 className="font-display font-bold text-lg text-white">
+            Live Gigs By Real Users ({gigs.length})
           </h2>
-          <p className="text-sm text-slate-600 max-w-md mx-auto">
-            Post a real Remote Digital, Local Help, or Community micro-gig with clear deliverables, deadline, and Pi price (0.2 – 5.0 π).
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              setPostError(null);
-              setPostOpen(true);
-            }}
-            className="min-h-[48px] px-6 rounded-xl bg-[#FFC800] text-[#050507] text-sm font-bold hover:bg-[#eab800] inline-flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Post the First Gig</span>
-          </button>
-        </section>
-      ) : filteredGigs.length === 0 ? (
-        <section className="rounded-2xl bg-white border border-slate-200 p-8 text-center space-y-2">
-          <p className="font-display font-bold text-slate-900">No matching gigs</p>
-          <p className="text-sm text-slate-600">
-            Adjust your search or skill filter to view posted gigs.
-          </p>
-        </section>
-      ) : (
-        <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredGigs.map((gig) => {
-            const unlocked = earnedSkills.includes(gig.requiredSkill);
-            return (
-              <div
-                key={gig.id}
-                className={`rounded-2xl bg-white border p-5 flex flex-col justify-between gap-4 transition-colors ${
-                  gig.featured
-                    ? "border-[#FFC800] ring-1 ring-[#FFC800]/40"
-                    : "border-slate-200 hover:border-slate-300"
-                }`}
-              >
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
-                    <span className="flex items-center gap-1.5">
-                      {gig.featured && (
-                        <span className="px-1.5 py-0.5 rounded bg-[#FFC800] text-[#050507] text-[10px] font-extrabold tracking-wide">
-                          FEATURED
+          <span className="text-slate-400">
+            Real Pioneer escrow postings only
+          </span>
+        </div>
+
+        {gigs.length === 0 ? (
+          <section className="rounded-2xl bg-white border border-slate-200 p-8 text-center space-y-3">
+            <div className="w-11 h-11 rounded-2xl bg-[#FFC800]/20 text-slate-900 flex items-center justify-center mx-auto">
+              <Briefcase className="w-5 h-5" />
+            </div>
+            <h3 className="font-display text-lg font-bold text-slate-900">
+              No gigs yet. Be the first to post a gig.
+            </h3>
+            <p className="text-sm text-slate-600 max-w-md mx-auto">
+              Click "Use Template" on any of the {gigTemplates.length} Official Gig Templates below to pre-fill and post your own real gig, or create one from scratch.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setPostError(null);
+                setPostOpen(true);
+              }}
+              className="min-h-[44px] px-5 rounded-xl bg-[#FFC800] text-[#050507] text-xs font-bold hover:bg-[#eab800] inline-flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Post Custom Gig</span>
+            </button>
+          </section>
+        ) : filteredGigs.length === 0 ? (
+          <section className="rounded-2xl bg-white border border-slate-200 p-8 text-center space-y-2">
+            <p className="font-display font-bold text-slate-900">No matching live gigs</p>
+            <p className="text-sm text-slate-600">
+              Adjust your search or skill filter to view live posted gigs.
+            </p>
+          </section>
+        ) : (
+          <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filteredGigs.map((gig) => {
+              const unlocked = earnedSkills.includes(gig.requiredSkill);
+              return (
+                <div
+                  key={gig.id}
+                  className={`rounded-2xl bg-white border p-5 flex flex-col justify-between gap-4 transition-colors ${
+                    gig.featured
+                      ? "border-[#FFC800] ring-1 ring-[#FFC800]/40"
+                      : "border-slate-200 hover:border-slate-300"
+                  }`}
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                      <span className="flex items-center gap-1.5">
+                        {gig.featured && (
+                          <span className="px-1.5 py-0.5 rounded bg-[#FFC800] text-[#050507] text-[10px] font-extrabold tracking-wide">
+                            FEATURED
+                          </span>
+                        )}
+                        <span>
+                          {gig.category} · {gig.deadline}
                         </span>
-                      )}
-                      <span>
-                        {gig.category} · {gig.deadline}
                       </span>
-                    </span>
-                    <span className="font-mono-tabular font-bold text-sm text-[#7C3AED]">
-                      {gig.pricePi.toFixed(2)} π
-                    </span>
+                      <span className="font-mono-tabular font-bold text-sm text-[#7C3AED]">
+                        {gig.pricePi.toFixed(2)} π
+                      </span>
+                    </div>
+
+                    <h3 className="font-display font-bold text-base text-slate-900">
+                      {gig.title}
+                    </h3>
+                    <p className="text-xs text-slate-600 leading-relaxed line-clamp-3">
+                      {gig.description}
+                    </p>
+
+                    <div className="pt-1 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="text-slate-700 font-medium">
+                        {gig.buyerHandle} {gig.buyerKyc ? "· Verified Pioneer" : ""}
+                      </span>
+                      <span className="text-slate-400">·</span>
+                      <span
+                        className={
+                          gig.status === "Funds Locked"
+                            ? "text-[#16A34A] font-semibold"
+                            : gig.status === "Dispute"
+                            ? "text-red-600 font-semibold"
+                            : "text-slate-600 font-medium"
+                        }
+                      >
+                        {gig.status}
+                      </span>
+                    </div>
                   </div>
 
-                  <h2 className="font-display font-bold text-base text-slate-900">
-                    {gig.title}
-                  </h2>
-                  <p className="text-xs text-slate-600 leading-relaxed line-clamp-3">
-                    {gig.description}
-                  </p>
+                  <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600">
+                      {unlocked ? (
+                        <>
+                          <Unlock className="w-3.5 h-3.5 text-[#16A34A]" />
+                          <span className="text-[#16A34A]">{gig.requiredSkill}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Lock className="w-3.5 h-3.5 text-slate-400" />
+                          <span>Cert: {gig.requiredSkill}</span>
+                        </>
+                      )}
+                    </span>
 
-                  <div className="pt-1 flex flex-wrap items-center gap-2 text-xs">
-                    <span className="text-slate-700 font-medium">
-                      {gig.buyerHandle} {gig.buyerKyc ? "· Verified Pioneer" : ""}
-                    </span>
-                    <span className="text-slate-400">·</span>
-                    <span
-                      className={
-                        gig.status === "Funds Locked"
-                          ? "text-[#16A34A] font-semibold"
-                          : gig.status === "Dispute"
-                          ? "text-red-600 font-semibold"
-                          : "text-slate-600 font-medium"
-                      }
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProofNote("");
+                        setProofFileName("");
+                        setProofImageDataUrl(undefined);
+                        setCheckedItems([]);
+                        setChatWarning(null);
+                        onSelectGig(gig.id);
+                      }}
+                      className="min-h-[40px] px-4 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition-colors whitespace-nowrap"
                     >
-                      {gig.status}
-                    </span>
+                      Open Escrow
+                    </button>
                   </div>
                 </div>
+              );
+            })}
+          </section>
+        )}
+      </div>
 
-                <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
-                  <span className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-600">
-                    {unlocked ? (
-                      <>
-                        <Unlock className="w-3.5 h-3.5 text-[#16A34A]" />
-                        <span className="text-[#16A34A]">{gig.requiredSkill}</span>
-                      </>
-                    ) : (
-                      <>
-                        <Lock className="w-3.5 h-3.5 text-slate-400" />
-                        <span>Cert: {gig.requiredSkill}</span>
-                      </>
-                    )}
+      {/* SECTION B: Official Gig Templates — Copy To Post Your Own Gig */}
+      <section className="space-y-4 pt-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div>
+            <h2 className="font-display font-bold text-lg text-white">
+              Gig Templates - Copy To Post Your Own Gig ({filteredTemplates.length})
+            </h2>
+            <p className="text-xs text-slate-400">
+              Published by EYENEKA Official. Templates are NOT live gigs and have no fake assigned users.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {filteredTemplates.map((tpl) => (
+            <div
+              key={tpl.id}
+              className="rounded-2xl bg-white border border-slate-200 p-5 flex flex-col justify-between gap-4"
+            >
+              <div className="space-y-2.5">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="inline-flex items-center gap-1.5 flex-wrap">
+                    <span className="px-1.5 py-0.5 rounded bg-[#050507] text-[#FFC800] text-[10px] font-bold">
+                      OFFICIAL STARTER
+                    </span>
+                    <span className="text-slate-500">{tpl.category}</span>
                   </span>
+                  <span className="font-mono-tabular font-bold text-sm text-[#7C3AED] shrink-0">
+                    {tpl.pricePi.toFixed(1)} π
+                  </span>
+                </div>
 
+                <h3 className="font-display font-bold text-base text-slate-900">
+                  {tpl.title}
+                </h3>
+                <p className="text-xs text-slate-600 leading-relaxed">{tpl.description}</p>
+
+                <div className="rounded-lg bg-slate-50 border border-slate-200 p-2.5 text-[11px] text-slate-700 space-y-1">
+                  <p className="font-semibold text-slate-900">Checklist:</p>
+                  <p>{tpl.checklist.join(" · ")}</p>
+                </div>
+
+                <p className="text-[11px] font-medium text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                  Template - Not a live gig. Click Use Template to post your own.
+                </p>
+
+                <p className="text-[11px] text-slate-500 tabular-nums">
+                  Author: {tpl.author} · {tpl.publishedAt} · Completions: {tpl.completionsCount} · Reviews: {tpl.reviewsCount} · Earnings: {tpl.earningsPi} π
+                </p>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-slate-500">
+                    Requires Cert: {tpl.requiredSkill}
+                  </span>
                   <button
                     type="button"
-                    onClick={() => {
-                      setProofNote("");
-                      setProofFileName("");
-                      setProofImageDataUrl(undefined);
-                      setCheckedItems([]);
-                      setChatWarning(null);
-                      onSelectGig(gig.id);
-                    }}
-                    className="min-h-[40px] px-4 rounded-xl bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition-colors whitespace-nowrap"
+                    onClick={() => openPostFromTemplate(tpl)}
+                    className="min-h-[40px] px-4 rounded-xl bg-[#7C3AED] text-white text-xs font-semibold hover:bg-[#6D28D9] transition-colors whitespace-nowrap"
                   >
-                    Open Escrow
+                    Use Template
                   </button>
                 </div>
+
+                {isAdmin && (
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => openEditTemplateModal(tpl)}
+                      className="min-h-[32px] px-3 rounded-lg border border-slate-300 text-xs font-semibold text-slate-800 hover:bg-slate-50 inline-flex items-center gap-1"
+                    >
+                      <Pencil className="w-3 h-3" /> Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDeleteTemplate(tpl.id)}
+                      className="min-h-[32px] px-3 rounded-lg border border-red-200 text-xs font-semibold text-red-700 hover:bg-red-50 inline-flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3 h-3" /> Delete
+                    </button>
+                  </div>
+                )}
               </div>
-            );
-          })}
-        </section>
-      )}
+            </div>
+          ))}
+        </div>
+      </section>
 
       {/* Gig Escrow + Proof + Chat Drawer Modal */}
       {activeGig && (() => {
@@ -1021,6 +1176,106 @@ export const WorkView: React.FC<WorkViewProps> = ({
                 {boost24h
                   ? "Pay 0.20 π Boost & Publish Gig"
                   : "Publish Gig to Escrow Marketplace"}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Admin Edit Gig Template Modal */}
+      {editTpl && isAdmin && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+          <div className="w-full sm:max-w-lg bg-white rounded-t-3xl sm:rounded-2xl border border-slate-200 overflow-hidden max-h-[90vh] flex flex-col">
+            <div className="px-6 py-4 bg-[#050507] text-white flex items-center justify-between">
+              <h3 className="font-display font-bold text-base">Edit Gig Template (Admin)</h3>
+              <button
+                type="button"
+                onClick={() => setEditTpl(null)}
+                className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-300 hover:text-white"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!etTitle.trim() || !etDesc.trim()) return;
+                onUpdateTemplate(editTpl.id, {
+                  title: etTitle.trim(),
+                  category: etCat,
+                  requiredSkill: etSkill.trim() || editTpl.requiredSkill,
+                  pricePi: Math.min(5, Math.max(0.2, Number(etPrice) || editTpl.pricePi)),
+                  deadline: etDeadline.trim() || editTpl.deadline,
+                  description: etDesc.trim(),
+                  checklist: etChecklist
+                    .split("\n")
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                });
+                setEditTpl(null);
+              }}
+              className="p-6 space-y-3.5 overflow-y-auto"
+            >
+              <input
+                type="text"
+                value={etTitle}
+                onChange={(e) => setEtTitle(e.target.value)}
+                placeholder="Template Title"
+                className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-300 text-sm"
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <select
+                  value={etCat}
+                  onChange={(e) => setEtCat(e.target.value as GigCategory)}
+                  className="w-full min-h-[44px] px-3 rounded-xl border border-slate-300 text-sm"
+                >
+                  <option value="Remote Digital">Remote Digital</option>
+                  <option value="Local Help">Local Help</option>
+                  <option value="Community">Community</option>
+                </select>
+                <input
+                  type="text"
+                  value={etSkill}
+                  onChange={(e) => setEtSkill(e.target.value)}
+                  placeholder="Required Skill"
+                  className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-300 text-sm"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0.2"
+                  max="5"
+                  value={etPrice}
+                  onChange={(e) => setEtPrice(e.target.value)}
+                  className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-300 text-sm font-mono-tabular"
+                />
+                <input
+                  type="text"
+                  value={etDeadline}
+                  onChange={(e) => setEtDeadline(e.target.value)}
+                  className="w-full min-h-[44px] px-3.5 rounded-xl border border-slate-300 text-sm"
+                />
+              </div>
+              <textarea
+                rows={2}
+                value={etDesc}
+                onChange={(e) => setEtDesc(e.target.value)}
+                className="w-full p-3 rounded-xl border border-slate-300 text-sm"
+              />
+              <textarea
+                rows={3}
+                value={etChecklist}
+                onChange={(e) => setEtChecklist(e.target.value)}
+                placeholder="Checklist items (1 per line)"
+                className="w-full p-3 rounded-xl border border-slate-300 text-sm"
+              />
+              <button
+                type="submit"
+                className="min-h-[48px] w-full rounded-xl bg-[#7C3AED] text-white text-sm font-semibold hover:bg-[#6D28D9]"
+              >
+                Save Template Changes
               </button>
             </form>
           </div>
