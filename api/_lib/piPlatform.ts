@@ -21,6 +21,22 @@ function getPiApiKey(): string | null {
   return key ? key : null;
 }
 
+export function parseRequestBody(body: unknown): Record<string, unknown> {
+  if (!body) return {};
+  if (typeof body === "string") {
+    try {
+      const parsed = JSON.parse(body);
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+    } catch {
+      return {};
+    }
+  }
+  if (typeof body === "object") {
+    return body as Record<string, unknown>;
+  }
+  return {};
+}
+
 export function isValidPaymentId(value: unknown): value is string {
   return typeof value === "string" && PAYMENT_ID_PATTERN.test(value.trim());
 }
@@ -69,7 +85,20 @@ function savePaidOrder(order: PiOrderRecord): PiOrderRecord {
   return order;
 }
 
-export async function approvePiPayment(paymentId: string): Promise<{
+function extractPiErrorMessage(data: Record<string, unknown>, fallback: string): string {
+  if (typeof data.error_message === "string" && data.error_message.trim()) {
+    return data.error_message.trim();
+  }
+  if (typeof data.message === "string" && data.message.trim()) {
+    return data.message.trim();
+  }
+  if (typeof data.error === "string" && data.error.trim()) {
+    return data.error.trim();
+  }
+  return fallback;
+}
+
+export async function approvePiPayment(paymentId: unknown): Promise<{
   status: number;
   body: Record<string, unknown>;
 }> {
@@ -80,10 +109,10 @@ export async function approvePiPayment(paymentId: string): Promise<{
   const apiKey = getPiApiKey();
   if (!apiKey) {
     return {
-      status: 503,
+      status: 500,
       body: {
         ok: false,
-        error: "Server PI_API_KEY is not configured in environment secrets.",
+        error: "PI_API_KEY missing in Vercel",
       },
     };
   }
@@ -102,14 +131,16 @@ export async function approvePiPayment(paymentId: string): Promise<{
 
   const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
+    const errMsg = extractPiErrorMessage(
+      data,
+      response.statusText || "Pi Platform API payment approval failed."
+    );
     return {
       status: response.status >= 400 ? response.status : 502,
       body: {
         ok: false,
-        error:
-          (typeof data.error_message === "string" && data.error_message) ||
-          (typeof data.error === "string" && data.error) ||
-          "Pi Platform API payment approval failed.",
+        piStatus: response.status,
+        error: errMsg,
       },
     };
   }
@@ -145,10 +176,10 @@ export async function completePiPayment(params: {
   const apiKey = getPiApiKey();
   if (!apiKey) {
     return {
-      status: 503,
+      status: 500,
       body: {
         ok: false,
-        error: "Server PI_API_KEY is not configured in environment secrets.",
+        error: "PI_API_KEY missing in Vercel",
       },
     };
   }
@@ -170,15 +201,17 @@ export async function completePiPayment(params: {
 
   const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
+    const errMsg = extractPiErrorMessage(
+      data,
+      response.statusText || "Pi Platform API payment completion failed."
+    );
     return {
       status: response.status >= 400 ? response.status : 502,
       body: {
         ok: false,
         status: "FAILED",
-        error:
-          (typeof data.error_message === "string" && data.error_message) ||
-          (typeof data.error === "string" && data.error) ||
-          "Pi Platform API payment completion failed.",
+        piStatus: response.status,
+        error: errMsg,
       },
     };
   }
@@ -235,6 +268,51 @@ export async function completePiPayment(params: {
   };
 }
 
+export async function cancelPiPayment(paymentId: unknown): Promise<{
+  status: number;
+  body: Record<string, unknown>;
+}> {
+  if (!isValidPaymentId(paymentId)) {
+    return { status: 400, body: { ok: false, error: "Invalid paymentId format." } };
+  }
+
+  const apiKey = getPiApiKey();
+  if (!apiKey) {
+    return {
+      status: 500,
+      body: { ok: false, error: "PI_API_KEY missing in Vercel" },
+    };
+  }
+
+  const cleanId = paymentId.trim();
+  const response = await fetch(
+    `${PI_PLATFORM_API_BASE}/payments/${encodeURIComponent(cleanId)}/cancel`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Key ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+    }
+  );
+
+  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    return {
+      status: response.status >= 400 ? response.status : 502,
+      body: {
+        ok: false,
+        error: extractPiErrorMessage(data, "Pi Platform API payment cancel failed."),
+      },
+    };
+  }
+
+  return {
+    status: 200,
+    body: { ok: true, cancelled: true, paymentId: cleanId, payment: data },
+  };
+}
+
 export async function resumeServerIncompletePayments(): Promise<{
   status: number;
   body: Record<string, unknown>;
@@ -246,7 +324,7 @@ export async function resumeServerIncompletePayments(): Promise<{
       body: {
         ok: true,
         resumedCount: 0,
-        skipped: "PI_API_KEY not configured",
+        skipped: "PI_API_KEY missing in Vercel",
       },
     };
   }

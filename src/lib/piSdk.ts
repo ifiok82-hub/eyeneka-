@@ -40,11 +40,15 @@ interface IncompletePiPayment {
   memo?: string;
   metadata?: Record<string, unknown>;
   transaction?: { txid?: string };
-  status?: { developer_approved?: boolean; developer_completed?: boolean };
+  status?: {
+    developer_approved?: boolean;
+    developer_completed?: boolean;
+    cancelled?: boolean;
+  };
 }
 
 interface WindowPi {
-  init: (config: { version: string; sandbox?: boolean; clientId?: string }) => void;
+  init: (config: { version: string; sandbox: boolean }) => void;
   authenticate: (
     scopes: string[],
     onIncompletePaymentFound?: (payment: IncompletePiPayment) => void
@@ -74,6 +78,7 @@ declare global {
 }
 
 let piSdkInitialized = false;
+let sessionAuthenticated = false;
 
 export function isPiBrowserAvailable(): boolean {
   return typeof window !== "undefined" && typeof window.Pi !== "undefined";
@@ -88,56 +93,58 @@ export function initPiSdk(): boolean {
       window.Pi.init({
         version: "2.0",
         sandbox: true,
-        clientId: PI_OAUTH_CLIENT_ID,
       });
       piSdkInitialized = true;
     }
     return true;
-  } catch {
+  } catch (err) {
+    console.log("[EYENEKA Pi] Pi.init failed:", err);
     return false;
   }
 }
 
-async function postJson(
+async function postJsonWithDetails(
   url: string,
   payload: Record<string, unknown>
-): Promise<Record<string, unknown>> {
+): Promise<{ status: number; ok: boolean; data: Record<string, unknown> }> {
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!response.ok || data.ok === false) {
-    const errMsg =
-      (typeof data.error === "string" && data.error) ||
-      `Pi payment server request failed (${response.status}).`;
-    throw new Error(errMsg);
-  }
-  return data;
+  return { status: response.status, ok: response.ok, data };
 }
 
 export async function handleIncompletePayment(payment: IncompletePiPayment): Promise<void> {
+  console.log("[EYENEKA Pi] Incomplete payment found:", payment);
   if (!payment?.identifier) return;
   const paymentId = payment.identifier;
   const txid = payment.transaction?.txid;
 
   try {
     if (txid && !payment.status?.developer_completed) {
-      await postJson("/api/pi/complete", {
+      const completeRes = await postJsonWithDetails("/api/pi/complete", {
         paymentId,
         txid,
         amount: payment.amount,
         memo: payment.memo,
         metadata: payment.metadata ?? {},
       });
+      console.log("[EYENEKA Pi] Incomplete /api/pi/complete response:", completeRes);
       return;
     }
     if (!payment.status?.developer_approved) {
-      await postJson("/api/pi/approve", { paymentId });
+      const approveRes = await postJsonWithDetails("/api/pi/approve", { paymentId });
+      console.log("[EYENEKA Pi] Incomplete /api/pi/approve response:", approveRes);
+      return;
     }
-  } catch {
-    // Keep silent if backend key isn't configured or payment expired
+    if (payment.status?.developer_approved && !txid && !payment.status?.cancelled) {
+      const cancelRes = await postJsonWithDetails("/api/pi/cancel", { paymentId });
+      console.log("[EYENEKA Pi] Incomplete /api/pi/cancel response:", cancelRes);
+    }
+  } catch (err) {
+    console.log("[EYENEKA Pi] Incomplete payment handler error:", err);
   }
 }
 
@@ -189,6 +196,7 @@ export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
       void handleIncompletePayment(incomplete);
     });
     if (auth?.user?.username) {
+      sessionAuthenticated = true;
       return {
         success: true,
         result: {
@@ -206,13 +214,36 @@ export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
       result: null,
       error: PI_SIGNIN_ERROR_MESSAGE,
     };
-  } catch {
+  } catch (err) {
+    console.log("[EYENEKA Pi] Pi.authenticate error:", err);
     return {
       success: false,
       result: null,
-      error: PI_SIGNIN_ERROR_MESSAGE,
+      error:
+        err instanceof Error && err.message
+          ? `Error: ${err.message}`
+          : PI_SIGNIN_ERROR_MESSAGE,
     };
   }
+}
+
+async function ensurePiPaymentSession(
+  onStatusChange?: (statusText: string) => void
+): Promise<void> {
+  if (!window.Pi) {
+    throw new Error(PI_BROWSER_REQUIRED_MESSAGE);
+  }
+  if (sessionAuthenticated) {
+    return;
+  }
+  onStatusChange?.("Authenticating Pi Browser session...");
+  const auth = await window.Pi.authenticate(PI_AUTH_SCOPES, (incomplete) => {
+    void handleIncompletePayment(incomplete);
+  });
+  if (!auth?.user?.username) {
+    throw new Error("Pi authentication did not return a Pioneer session.");
+  }
+  sessionAuthenticated = true;
 }
 
 export async function executePiPayment(
@@ -222,6 +253,14 @@ export async function executePiPayment(
   const sdkReady = initPiSdk();
   if (!sdkReady || typeof window === "undefined" || !window.Pi) {
     throw new Error(PI_BROWSER_REQUIRED_MESSAGE);
+  }
+
+  try {
+    await ensurePiPaymentSession(onStatusChange);
+  } catch (authErr: unknown) {
+    const msg = authErr instanceof Error ? authErr.message : String(authErr);
+    console.log("[EYENEKA Pi] Session auth before createPayment failed:", authErr);
+    throw new Error(`Error: ${msg}`);
   }
 
   return await new Promise<PiPaymentReceipt>((resolve, reject) => {
@@ -234,6 +273,7 @@ export async function executePiPayment(
     };
 
     try {
+      onStatusChange?.("Opening Pi Wallet...");
       window.Pi!.createPayment(
         {
           amount: payload.amount,
@@ -242,28 +282,43 @@ export async function executePiPayment(
         },
         {
           onReadyForServerApproval: async (paymentId) => {
+            console.log("[EYENEKA Pi] onReadyForServerApproval paymentId:", paymentId);
             onStatusChange?.("Waiting for approval...");
             try {
-              await postJson("/api/pi/approve", { paymentId });
+              const res = await postJsonWithDetails("/api/pi/approve", { paymentId });
+              console.log("[EYENEKA Pi] /api/pi/approve response:", res);
+              if (!res.ok || res.data.ok === false) {
+                const serverMsg =
+                  (typeof res.data.error === "string" && res.data.error) ||
+                  "Approval rejected by Pi Platform API";
+                failOnce(new Error(`Server approve failed: ${res.status} ${serverMsg}`));
+              }
             } catch (err: unknown) {
-              failOnce(
-                err instanceof Error ? err : new Error("Pi payment failed. Try again.")
-              );
+              console.log("[EYENEKA Pi] /api/pi/approve network error:", err);
+              const msg = err instanceof Error ? err.message : String(err);
+              failOnce(new Error(`Server approve failed: 500 ${msg}`));
             }
           },
           onReadyForServerCompletion: async (paymentId, txid) => {
+            console.log("[EYENEKA Pi] onReadyForServerCompletion:", { paymentId, txid });
+            onStatusChange?.("Confirming on Pi Testnet...");
             try {
-              const completed = await postJson("/api/pi/complete", {
+              const res = await postJsonWithDetails("/api/pi/complete", {
                 paymentId,
                 txid,
                 amount: payload.amount,
                 memo: payload.memo,
                 metadata: payload.metadata,
               });
-              if (completed.status !== "PAID") {
-                throw new Error("Pi payment failed. Try again.");
+              console.log("[EYENEKA Pi] /api/pi/complete response:", res);
+              if (!res.ok || res.data.status !== "PAID") {
+                const serverMsg =
+                  (typeof res.data.error === "string" && res.data.error) ||
+                  "Completion failed";
+                failOnce(new Error(`Server complete failed: ${res.status} ${serverMsg}`));
+                return;
               }
-              onStatusChange?.("Payment Complete in Pi Testnet");
+              onStatusChange?.("Payment Complete");
               if (!settled) {
                 settled = true;
                 resolve({
@@ -276,21 +331,31 @@ export async function executePiPayment(
                 });
               }
             } catch (err: unknown) {
-              failOnce(
-                err instanceof Error ? err : new Error("Pi payment failed. Try again.")
-              );
+              console.log("[EYENEKA Pi] /api/pi/complete network error:", err);
+              const msg = err instanceof Error ? err.message : String(err);
+              failOnce(new Error(`Error: ${msg}`));
             }
           },
-          onCancel: () => {
-            failOnce(new Error("Payment cancelled. No Pi was taken."));
+          onCancel: (paymentId) => {
+            console.log("[EYENEKA Pi] onCancel paymentId:", paymentId);
+            failOnce(new Error("Payment cancelled. No Pi taken."));
           },
-          onError: () => {
-            failOnce(new Error("Pi payment failed. Try again."));
+          onError: (error, payment) => {
+            console.log("[EYENEKA Pi] onError:", { error, payment });
+            const rawMsg =
+              error instanceof Error
+                ? error.message
+                : typeof error === "string"
+                ? error
+                : JSON.stringify(error ?? "Unknown Pi SDK error");
+            failOnce(new Error(`Error: ${rawMsg}`));
           },
         }
       );
-    } catch {
-      failOnce(new Error("Pi payment failed. Try again."));
+    } catch (err: unknown) {
+      console.log("[EYENEKA Pi] createPayment threw synchronously:", err);
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      failOnce(new Error(`Error: ${rawMsg}`));
     }
   });
 }

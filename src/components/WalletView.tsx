@@ -117,7 +117,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
             <p className="text-xs text-slate-400">
               Status:{" "}
               {piConnected
-                ? `${inPiBrowser ? "Pi Browser Mainnet SDK v2.0" : "Pi Session Active"}${
+                ? `${inPiBrowser ? "Pi Browser Testnet SDK v2.0 (sandbox: true)" : "Pi Session Active"}${
                     kycVerified ? " · KYC Verified" : " · KYC Unverified"
                   }`
                 : "Wallet not connected"}
@@ -126,16 +126,6 @@ export const WalletView: React.FC<WalletViewProps> = ({
         </div>
 
         <div className="flex flex-wrap gap-3 shrink-0">
-          {!piConnected && (
-            <button
-              type="button"
-              onClick={onConnectPi}
-              className="min-h-[48px] px-5 rounded-xl bg-[#FFC800] text-[#050507] text-sm font-bold hover:bg-[#eab800] inline-flex items-center gap-2"
-            >
-              <Wallet className="w-4 h-4" />
-              <span>Login with Pi</span>
-            </button>
-          )}
           <button
             type="button"
             onClick={() =>
@@ -146,11 +136,21 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 "core-team-test"
               )
             }
-            className="min-h-[48px] px-5 rounded-xl bg-[#7C3AED] text-white text-sm font-semibold hover:bg-[#6D28D9] inline-flex items-center gap-2"
+            className="min-h-[48px] px-5 rounded-xl bg-[#FFC800] text-[#050507] text-sm font-bold hover:bg-[#eab800] inline-flex items-center gap-2 shadow-lg"
           >
             <ShieldCheck className="w-4 h-4" />
-            <span>Pay with Pi (Testnet) · 1.00 π</span>
+            <span>Test Pi Payment - Pay 1 Pi (Testnet)</span>
           </button>
+          {!piConnected && (
+            <button
+              type="button"
+              onClick={onConnectPi}
+              className="min-h-[48px] px-5 rounded-xl bg-[#7C3AED] text-white text-sm font-semibold hover:bg-[#6D28D9] inline-flex items-center gap-2"
+            >
+              <Wallet className="w-4 h-4" />
+              <span>Login with Pi</span>
+            </button>
+          )}
           <button
             type="button"
             onClick={() =>

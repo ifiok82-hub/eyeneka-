@@ -1,14 +1,8 @@
-import { completePiPayment } from "../_lib/piPlatform.js";
+import { completePiPayment, parseRequestBody } from "../_lib/piPlatform.js";
 
 interface ApiReq {
   method?: string;
-  body?: {
-    paymentId?: unknown;
-    txid?: unknown;
-    amount?: unknown;
-    memo?: unknown;
-    metadata?: unknown;
-  };
+  body?: unknown;
 }
 
 interface ApiRes {
@@ -22,12 +16,13 @@ export default async function handler(req: ApiReq, res: ApiRes) {
   }
 
   try {
+    const body = parseRequestBody(req.body);
     const result = await completePiPayment({
-      paymentId: req.body?.paymentId,
-      txid: req.body?.txid,
-      amount: req.body?.amount,
-      memo: req.body?.memo,
-      metadata: req.body?.metadata,
+      paymentId: body.paymentId,
+      txid: body.txid,
+      amount: body.amount,
+      memo: body.memo,
+      metadata: body.metadata,
     });
     res.status(result.status).json(result.body);
   } catch (err: unknown) {

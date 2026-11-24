@@ -72,7 +72,7 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
       });
     } catch (err: unknown) {
       setStatusMessage(null);
-      setError(err instanceof Error ? err.message : "Pi payment failed. Try again.");
+      setError(err instanceof Error ? err.message : `Error: ${String(err)}`);
     } finally {
       setProcessing(false);
     }
@@ -90,10 +90,10 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
             />
             <div>
               <h3 className="font-display font-bold text-sm text-white">
-                {receipt ? "Payment Complete in Pi Testnet" : payment.title}
+                {receipt ? "Payment Complete" : payment.title}
               </h3>
               <p className="text-[11px] text-[#FFC800]">
-                Pi SDK v2.0 Testnet · Sandbox Mode
+                Pi SDK v2.0 Testnet · sandbox: true
               </p>
             </div>
           </div>
@@ -193,7 +193,7 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
                 {receipt.amountPi.toFixed(2)} π
               </p>
               <p className="text-xs font-semibold text-[#16A34A]">
-                Payment Complete in Pi Testnet
+                Payment Complete · Pi Testnet
               </p>
             </div>
 

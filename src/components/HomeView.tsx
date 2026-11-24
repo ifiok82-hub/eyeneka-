@@ -75,6 +75,7 @@ interface HomeViewProps {
   onSelectLesson: (lessonId: string) => void;
   onSelectGig: (gigId: string) => void;
   onConnectPi: () => void;
+  onTestPiPayment: () => void;
   onRecordAdSupport: () => void;
 }
 
@@ -117,6 +118,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onSelectLesson,
   onSelectGig,
   onConnectPi,
+  onTestPiPayment,
   onRecordAdSupport,
 }) => {
   const [adDone, setAdDone] = useState(false);
@@ -272,11 +274,20 @@ export const HomeView: React.FC<HomeViewProps> = ({
               Learn verified AI and digital skills for free, copy official templates to post real escrow gigs in Pi, follow everyday health navigation, and launch peer savings circles.
             </p>
             <div className="pt-2 flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={onTestPiPayment}
+                className="min-h-[46px] px-5 py-2.5 rounded-xl bg-[#FFC800] text-[#050507] text-sm font-bold hover:bg-[#eab800] transition-colors inline-flex items-center gap-2 whitespace-nowrap shadow-lg"
+              >
+                <span>Test Pi Payment - Pay 1 Pi (Testnet)</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+
               {!piConnected && (
                 <button
                   type="button"
                   onClick={onConnectPi}
-                  className="min-h-[44px] px-5 py-2.5 rounded-xl bg-[#FFC800] text-[#050507] text-sm font-semibold hover:bg-[#eab800] transition-colors inline-flex items-center gap-2 whitespace-nowrap"
+                  className="min-h-[44px] px-5 py-2.5 rounded-xl bg-white/10 border border-white/20 text-white text-sm font-semibold hover:bg-white/15 transition-colors inline-flex items-center gap-2 whitespace-nowrap"
                 >
                   <span>Connect Pi Wallet (SDK v2.0)</span>
                   <ArrowRight className="w-4 h-4" />

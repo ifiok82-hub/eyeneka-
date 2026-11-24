@@ -5,6 +5,7 @@ import { fileURLToPath } from "url";
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
 import {
   approvePiPayment,
+  cancelPiPayment,
   completePiPayment,
   resumeServerIncompletePayments,
 } from "./api/_lib/piPlatform.js";
@@ -71,6 +72,16 @@ async function startServer() {
       res.status(result.status).json(result.body);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Incomplete payment check failed.";
+      res.status(500).json({ ok: false, error: message });
+    }
+  });
+
+  app.post("/api/pi/cancel", async (req, res) => {
+    try {
+      const result = await cancelPiPayment(req.body?.paymentId);
+      res.status(result.status).json(result.body);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Cancel request failed.";
       res.status(500).json({ ok: false, error: message });
     }
   });

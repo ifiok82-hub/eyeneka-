@@ -1525,6 +1525,14 @@ export default function App() {
             onSelectLesson={(id) => setSelectedLessonId(id)}
             onSelectGig={(id) => setSelectedGigId(id)}
             onConnectPi={handleOpenPiConnect}
+            onTestPiPayment={() =>
+              handleQuickPaymentTest(
+                1.0,
+                "Eyeneka - Test Payment (1 Pi)",
+                "test",
+                "core-team-test"
+              )
+            }
             onRecordAdSupport={handleRecordAdSupport}
           />
         )}
