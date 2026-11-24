@@ -15,7 +15,8 @@ export type AllowedU2AProductType =
   | "circle"
   | "care"
   | "card"
-  | "test";
+  | "test"
+  | "test_payment";
 
 const ALLOWED_PRODUCT_TYPES = new Set<AllowedU2AProductType>([
   "certificate",
@@ -25,6 +26,7 @@ const ALLOWED_PRODUCT_TYPES = new Set<AllowedU2AProductType>([
   "care",
   "card",
   "test",
+  "test_payment",
 ]);
 
 export interface PiOrderRecord {
@@ -201,6 +203,7 @@ function resolveAuthoritativeOffer(params: {
         memo: memoClean || "Eyeneka - Care Partner",
       };
     case "test":
+    case "test_payment":
       return {
         ok: true,
         amount: 1.0,
@@ -261,6 +264,7 @@ function validateCatalogAmount(
     case "care":
       return Math.abs(amount - 0.5) < 0.0001;
     case "test":
+    case "test_payment":
       return Math.abs(amount - 1.0) < 0.0001;
     case "certificate":
       return amount >= 0.0999 && amount <= 0.5001;

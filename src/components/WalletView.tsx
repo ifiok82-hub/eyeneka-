@@ -126,21 +126,6 @@ export const WalletView: React.FC<WalletViewProps> = ({
         </div>
 
         <div className="flex flex-wrap gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={() =>
-              onQuickPaymentTest(
-                1.0,
-                "Eyeneka - Test Payment (1 Pi)",
-                "test",
-                "core-team-test"
-              )
-            }
-            className="min-h-[48px] px-5 rounded-xl bg-[#FFC800] text-[#050507] text-sm font-bold hover:bg-[#eab800] inline-flex items-center gap-2 shadow-lg"
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>Test Pi Payment - Pay 1 Pi (Testnet)</span>
-          </button>
           {!piConnected && (
             <button
               type="button"
@@ -163,7 +148,8 @@ export const WalletView: React.FC<WalletViewProps> = ({
             }
             className="min-h-[48px] px-4 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-semibold hover:bg-white/15 inline-flex items-center gap-2"
           >
-            <span>Pay with Pi (Testnet) · Card Renewal 0.20 π</span>
+            <ShieldCheck className="w-4 h-4 text-[#FFC800]" />
+            <span>Renew Pioneer Card · 0.20 π</span>
           </button>
         </div>
       </section>

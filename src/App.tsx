@@ -48,6 +48,7 @@ import { WalletView } from "./components/WalletView";
 import { LawView } from "./components/LawView";
 import { PiPaymentModal } from "./components/PiPaymentModal";
 import { PiAuthModal } from "./components/PiAuthModal";
+import { Footer } from "./components/Footer";
 
 const STORAGE_KEY = "eyeneka_official_v4";
 
@@ -1534,14 +1535,6 @@ export default function App() {
             onSelectLesson={(id) => setSelectedLessonId(id)}
             onSelectGig={(id) => setSelectedGigId(id)}
             onConnectPi={handleOpenPiConnect}
-            onTestPiPayment={() =>
-              handleQuickPaymentTest(
-                1.0,
-                "Eyeneka - Test Payment (1 Pi)",
-                "test",
-                "core-team-test"
-              )
-            }
             onRecordAdSupport={handleRecordAdSupport}
           />
         )}
@@ -1691,23 +1684,28 @@ export default function App() {
         onClose={() => setPendingPayment(null)}
       />
 
-      {/* Footer — EYENEKA only, zero parent entity or reg number */}
-      <footer className="border-t border-white/10 bg-[#050507] text-slate-400 py-8 mb-14 md:mb-0">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-xs">
-          <div className="space-y-1">
-            <p className="font-display font-semibold text-white">
-              EYENEKA - Where Pioneers Learn, Work, Earn and Care.
-            </p>
-            <p>
-              Decentralized - Built on Pi Blockchain - Smart Contract Escrow - User Owns Data
-            </p>
-          </div>
-          <div className="text-left sm:text-right space-y-1">
-            <p>Operator: EYENEKA</p>
-            <p>Global · Borderless · Pi Coin Only</p>
-          </div>
-        </div>
-      </footer>
+      <Footer
+        onTestPaymentComplete={(receipt) => {
+          setTransactions((prev) => [
+            {
+              id: `tx-${Date.now()}`,
+              category: "Test",
+              type: "Pi Testnet Payment",
+              label: "Eyeneka - Test Payment (1 Pi)",
+              amountPi: receipt.amount,
+              direction: "out",
+              status: "Confirmed",
+              timestamp: "Just now",
+              dateIso: new Date().toISOString().slice(0, 10),
+              escrowId: `TST-${Date.now().toString().slice(-5)}`,
+              paymentId: receipt.paymentId,
+              txHash: receipt.txHash,
+            },
+            ...prev,
+          ]);
+          showToast(`Test Payment Complete - ${receipt.paymentId}`);
+        }}
+      />
 
       <BottomNav activeTab={activeTab} onTabChange={setActiveTab} language={language} />
     </div>

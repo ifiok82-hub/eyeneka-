@@ -316,26 +316,53 @@ export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
   }
 }
 
+const PI_WALLET_TIMEOUT_MS = 15000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(timeoutMessage));
+    }, ms);
+    promise.then(
+      (val) => {
+        window.clearTimeout(timer);
+        resolve(val);
+      },
+      (err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
 async function ensurePiPaymentSession(
   onStatusChange?: (statusText: string) => void
-): Promise<string> {
+): Promise<string | null> {
   if (!window.Pi) {
     throw new Error(PI_BROWSER_REQUIRED_MESSAGE);
   }
-  if (paymentScopeAuthenticated && inMemorySessionToken) {
+  if (paymentScopeAuthenticated) {
     return inMemorySessionToken;
   }
-  onStatusChange?.("Authenticating Pi Browser session...");
-  const auth = await window.Pi.authenticate(PI_AUTH_SCOPES, (incomplete) => {
-    void handleIncompletePayment(incomplete);
-  });
-  const accessToken = typeof auth?.accessToken === "string" ? auth.accessToken.trim() : "";
-  if (!accessToken) {
-    throw new Error("Pi authentication did not return an access token.");
-  }
-  const session = await exchangeAccessTokenForSession(accessToken);
+  onStatusChange?.("Waiting for Pi Wallet...");
+  const auth = await withTimeout(
+    window.Pi.authenticate(PI_AUTH_SCOPES, (incomplete) => {
+      void handleIncompletePayment(incomplete);
+    }),
+    PI_WALLET_TIMEOUT_MS,
+    "Pi Wallet authentication timed out after 15s. Please try again in Pi Browser."
+  );
   paymentScopeAuthenticated = true;
-  return session.sessionToken;
+
+  // Never block payment on App Studio login; exchange token asynchronously in background if available
+  const accessToken = typeof auth?.accessToken === "string" ? auth.accessToken.trim() : "";
+  if (accessToken && !inMemorySessionToken) {
+    void exchangeAccessTokenForSession(accessToken).catch(() => {
+      // Non-blocking: U2A payments proceed via server /api/pi/approve & /api/pi/complete
+    });
+  }
+  return inMemorySessionToken;
 }
 
 export async function executePiPayment(
@@ -347,46 +374,63 @@ export async function executePiPayment(
     throw new Error(PI_BROWSER_REQUIRED_MESSAGE);
   }
 
-  let sessionToken = "";
+  let sessionToken: string | null = null;
   try {
     sessionToken = await ensurePiPaymentSession(onStatusChange);
   } catch (authErr: unknown) {
     const msg = authErr instanceof Error ? authErr.message : String(authErr);
     console.log("[EYENEKA Pi] Session auth before createPayment failed:", authErr);
-    throw new Error(`Error: ${msg}`);
+    throw new Error(msg);
   }
 
-  onStatusChange?.("Preparing authoritative U2A order...");
-  const intentRes = await postJsonWithDetails(
-    "/api/pi/intent",
-    {
-      type: payload.metadata.type,
-      itemId: payload.metadata.itemId,
-      amount: payload.amount,
-      memo: payload.memo,
-    },
-    sessionToken
-  );
-  if (
-    !intentRes.ok ||
-    typeof intentRes.data.amount !== "number" ||
-    typeof intentRes.data.memo !== "string" ||
-    !intentRes.data.metadata ||
-    typeof intentRes.data.metadata !== "object"
-  ) {
-    const errMsg =
-      (typeof intentRes.data.error === "string" && intentRes.data.error) ||
-      "Could not prepare server-side U2A payment intent.";
-    throw new Error(`Error: ${errMsg}`);
-  }
+  let serverAmount = payload.amount;
+  let serverMemo = payload.memo;
+  let serverMetadata: Record<string, string | number | boolean> = payload.metadata;
 
-  const serverAmount = intentRes.data.amount;
-  const serverMemo = intentRes.data.memo;
-  const serverMetadata = intentRes.data.metadata as Record<string, string | number | boolean>;
+  // Use server-prepared intent when App Studio session is already ready, otherwise proceed directly
+  if (sessionToken) {
+    try {
+      const intentRes = await postJsonWithDetails(
+        "/api/pi/intent",
+        {
+          type: payload.metadata.type,
+          itemId: payload.metadata.itemId,
+          amount: payload.amount,
+          memo: payload.memo,
+        },
+        sessionToken
+      );
+      if (
+        intentRes.ok &&
+        typeof intentRes.data.amount === "number" &&
+        typeof intentRes.data.memo === "string" &&
+        intentRes.data.metadata &&
+        typeof intentRes.data.metadata === "object"
+      ) {
+        serverAmount = intentRes.data.amount;
+        serverMemo = intentRes.data.memo;
+        serverMetadata = intentRes.data.metadata as Record<string, string | number | boolean>;
+      }
+    } catch {
+      // Never block Pi payment if intent pre-registration fails
+    }
+  }
 
   return await new Promise<PiPaymentReceipt>((resolve, reject) => {
     let settled = false;
+    let walletTimer: number | null = window.setTimeout(() => {
+      failOnce(new Error("Waiting for Pi Wallet timed out after 15s."));
+    }, PI_WALLET_TIMEOUT_MS);
+
+    const clearWalletTimer = () => {
+      if (walletTimer !== null) {
+        window.clearTimeout(walletTimer);
+        walletTimer = null;
+      }
+    };
+
     const failOnce = (err: Error) => {
+      clearWalletTimer();
       if (!settled) {
         settled = true;
         reject(err);
@@ -394,7 +438,7 @@ export async function executePiPayment(
     };
 
     try {
-      onStatusChange?.("Opening Pi Wallet...");
+      onStatusChange?.("Waiting for Pi Wallet...");
       window.Pi!.createPayment(
         {
           amount: serverAmount,
@@ -403,13 +447,14 @@ export async function executePiPayment(
         },
         {
           onReadyForServerApproval: async (paymentId) => {
+            clearWalletTimer();
             console.log("[EYENEKA Pi] onReadyForServerApproval paymentId:", paymentId);
-            onStatusChange?.("Waiting for approval...");
+            onStatusChange?.("Waiting for Pi Wallet...");
             try {
               const res = await postJsonWithDetails(
                 "/api/pi/approve",
                 { paymentId },
-                sessionToken
+                inMemorySessionToken
               );
               console.log("[EYENEKA Pi] /api/pi/approve response:", res);
               if (!res.ok || res.data.ok === false) {
@@ -425,13 +470,14 @@ export async function executePiPayment(
             }
           },
           onReadyForServerCompletion: async (paymentId, txid) => {
+            clearWalletTimer();
             console.log("[EYENEKA Pi] onReadyForServerCompletion:", { paymentId, txid });
             onStatusChange?.("Confirming on Pi Testnet...");
             try {
               const res = await postJsonWithDetails(
                 "/api/pi/complete",
                 { paymentId, txid },
-                sessionToken
+                inMemorySessionToken
               );
               console.log("[EYENEKA Pi] /api/pi/complete response:", res);
               if (!res.ok || res.data.status !== "PAID") {
@@ -457,7 +503,7 @@ export async function executePiPayment(
             } catch (err: unknown) {
               console.log("[EYENEKA Pi] /api/pi/complete network error:", err);
               const msg = err instanceof Error ? err.message : String(err);
-              failOnce(new Error(`Error: ${msg}`));
+              failOnce(new Error(msg));
             }
           },
           onCancel: (paymentId) => {
@@ -472,16 +518,29 @@ export async function executePiPayment(
                 : typeof error === "string"
                 ? error
                 : JSON.stringify(error ?? "Unknown Pi SDK error");
-            failOnce(new Error(`Error: ${rawMsg}`));
+            failOnce(new Error(rawMsg));
           },
         }
       );
     } catch (err: unknown) {
       console.log("[EYENEKA Pi] createPayment threw synchronously:", err);
       const rawMsg = err instanceof Error ? err.message : String(err);
-      failOnce(new Error(`Error: ${rawMsg}`));
+      failOnce(new Error(rawMsg));
     }
   });
+}
+
+export async function payUserToApp(
+  onStatusChange?: (statusText: string) => void
+): Promise<PiPaymentReceipt> {
+  return await executePiPayment(
+    {
+      amount: 1,
+      memo: "Eyeneka - Test Payment",
+      metadata: { type: "test_payment" },
+    },
+    onStatusChange
+  );
 }
 
 export async function triggerPiAd(
