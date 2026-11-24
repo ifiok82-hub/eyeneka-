@@ -316,7 +316,7 @@ export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
   }
 }
 
-const PI_WALLET_TIMEOUT_MS = 15000;
+const PI_WALLET_TIMEOUT_MS = 60000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -480,7 +480,7 @@ export async function executePiPayment(
                 inMemorySessionToken
               );
               console.log("[EYENEKA Pi] /api/pi/complete response:", res);
-              if (!res.ok || res.data.status !== "PAID") {
+              if (!res.ok || res.data.ok === false) {
                 const serverMsg =
                   (typeof res.data.error === "string" && res.data.error) ||
                   "Completion failed";
