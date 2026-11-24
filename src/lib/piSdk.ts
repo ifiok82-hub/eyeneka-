@@ -117,7 +117,12 @@ export function isRealPiBrowserEnvironment(): boolean {
   if (typeof window === "undefined" || typeof navigator === "undefined") {
     return false;
   }
-  return /PiBrowser/i.test(navigator.userAgent || "") && typeof window.Pi !== "undefined";
+  const ua = navigator.userAgent || "";
+  const ref = typeof document !== "undefined" ? document.referrer || "" : "";
+  const isPiContext =
+    /PiBrowser|MinePi|PiNetwork|AppStudio/i.test(ua) ||
+    /(piappengine\.com|minepi\.com|pinet\.com|pi\.app)/i.test(ref);
+  return isPiContext && typeof window.Pi !== "undefined";
 }
 
 export async function initPiSdk(): Promise<boolean> {
