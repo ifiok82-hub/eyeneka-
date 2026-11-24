@@ -1,9 +1,21 @@
+export const PI_OAUTH_CLIENT_ID = "xWHNaUUWdRg4mpkSUSlfh0NGvLF1iOrcEDivLTC";
+export const PI_APP_REDIRECT_URL = "https://eyeneka.vercel.app/";
+export const PI_AUTH_SCOPES: ["username", "payments"] = ["username", "payments"];
+export const PI_SIGNIN_ERROR_MESSAGE = "Pi Sign-In failed. Try again in Pi Browser.";
+
 export interface PiAuthResult {
   connected: boolean;
   username: string;
   uid: string;
+  accessToken?: string;
   kycVerified: boolean;
   inPiBrowser: boolean;
+}
+
+export interface PiAuthAttempt {
+  success: boolean;
+  result: PiAuthResult | null;
+  error?: string;
 }
 
 export interface PiPaymentPayload {
@@ -21,11 +33,14 @@ export interface PiPaymentReceipt {
 }
 
 interface WindowPi {
-  init: (config: { version: string; sandbox?: boolean }) => void;
+  init: (config: { version: string; sandbox?: boolean; clientId?: string }) => void;
   authenticate: (
     scopes: string[],
     onIncompletePaymentFound?: (payment: unknown) => void
-  ) => Promise<{ user: { uid: string; username: string; kyc?: boolean } }>;
+  ) => Promise<{
+    accessToken?: string;
+    user: { uid: string; username: string; kyc?: boolean };
+  }>;
   createPayment: (
     paymentData: PiPaymentPayload,
     callbacks: {
@@ -46,6 +61,8 @@ declare global {
   }
 }
 
+let piSdkInitialized = false;
+
 function generateTxHash(): string {
   const chars = "0123456789abcdef";
   let out = "pi_";
@@ -64,35 +81,61 @@ export function initPiSdk(): boolean {
     return false;
   }
   try {
-    window.Pi.init({ version: "2.0", sandbox: false });
+    if (!piSdkInitialized) {
+      window.Pi.init({
+        version: "2.0",
+        sandbox: false,
+        clientId: PI_OAUTH_CLIENT_ID,
+      });
+      piSdkInitialized = true;
+    }
     return true;
   } catch {
     return false;
   }
 }
 
-export async function authenticateWithPiSdk(): Promise<PiAuthResult | null> {
+export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
   const sdkReady = initPiSdk();
-  if (sdkReady && window.Pi) {
-    try {
-      const auth = await window.Pi.authenticate(["username", "payments"], () => {});
-      if (auth?.user?.username) {
-        return {
+  if (!sdkReady || !window.Pi) {
+    return {
+      success: false,
+      result: null,
+      error: PI_SIGNIN_ERROR_MESSAGE,
+    };
+  }
+
+  try {
+    const auth = await window.Pi.authenticate(PI_AUTH_SCOPES, () => {});
+    if (auth?.user?.username) {
+      return {
+        success: true,
+        result: {
           connected: true,
           username: auth.user.username.replace(/^@/, ""),
           uid: auth.user.uid,
+          accessToken: auth.accessToken,
           kycVerified: Boolean(auth.user.kyc ?? true),
           inPiBrowser: true,
-        };
-      }
-    } catch {
-      return null;
+        },
+      };
     }
+    return {
+      success: false,
+      result: null,
+      error: PI_SIGNIN_ERROR_MESSAGE,
+    };
+  } catch {
+    return {
+      success: false,
+      result: null,
+      error: PI_SIGNIN_ERROR_MESSAGE,
+    };
   }
-  return null;
 }
 
 export async function executePiPayment(payload: PiPaymentPayload): Promise<PiPaymentReceipt> {
+  initPiSdk();
   if (typeof window !== "undefined" && window.Pi) {
     try {
       return await new Promise<PiPaymentReceipt>((resolve, reject) => {

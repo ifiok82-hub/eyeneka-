@@ -28,7 +28,12 @@ import {
   OFFICIAL_STARTER_LESSONS,
   TODAY_ISO,
 } from "./data/officialStarterData";
-import { authenticateWithPiSdk, initPiSdk } from "./lib/piSdk";
+import {
+  PI_APP_REDIRECT_URL,
+  PI_SIGNIN_ERROR_MESSAGE,
+  authenticateWithPiSdk,
+  initPiSdk,
+} from "./lib/piSdk";
 import { Header } from "./components/Header";
 import { BottomNav } from "./components/BottomNav";
 import { AdminPublishPayload, HomeView } from "./components/HomeView";
@@ -92,6 +97,7 @@ export default function App() {
   // Modals & Overlays
   const [pendingPayment, setPendingPayment] = useState<PendingPiPayment | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [notifOpen, setNotifOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
@@ -255,23 +261,35 @@ export default function App() {
     setUsername(auth.username);
     setKycVerified(auth.kycVerified);
     setInPiBrowser(auth.inPiBrowser);
+    setAuthError(null);
     if (auth.kycVerified && !kycTrustAwarded) {
       setTrustScore((s) => Math.min(100, s + 20));
       setKycTrustAwarded(true);
     }
-    showToast(`Pi Wallet connected as @${auth.username}`);
+    setActiveTab("home");
+    if (
+      typeof window !== "undefined" &&
+      window.location.origin === new URL(PI_APP_REDIRECT_URL).origin &&
+      window.location.pathname !== "/"
+    ) {
+      window.history.replaceState(null, "", "/");
+    }
+    showToast(`Welcome, Pioneer @${auth.username}`);
   };
 
   const handleOpenPiConnect = async () => {
-    const sdkRes = await authenticateWithPiSdk();
-    if (sdkRes) {
+    setAuthError(null);
+    const attempt = await authenticateWithPiSdk();
+    if (attempt.success && attempt.result) {
       handleAuthenticated({
-        username: sdkRes.username,
-        kycVerified: sdkRes.kycVerified,
+        username: attempt.result.username,
+        kycVerified: attempt.result.kycVerified,
         inPiBrowser: true,
       });
       return;
     }
+    const errMsg = attempt.error ?? PI_SIGNIN_ERROR_MESSAGE;
+    setAuthError(errMsg);
     setAuthModalOpen(true);
   };
 
@@ -1578,7 +1596,11 @@ export default function App() {
       {/* Pi Auth & Payment Modals */}
       <PiAuthModal
         open={authModalOpen}
-        onClose={() => setAuthModalOpen(false)}
+        initialError={authError}
+        onClose={() => {
+          setAuthModalOpen(false);
+          setAuthError(null);
+        }}
         onAuthenticated={handleAuthenticated}
       />
       <PiPaymentModal
