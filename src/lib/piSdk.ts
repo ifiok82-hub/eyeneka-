@@ -113,6 +113,13 @@ export function isPiBrowserAvailable(): boolean {
   return typeof window !== "undefined" && typeof window.Pi !== "undefined";
 }
 
+export function isRealPiBrowserEnvironment(): boolean {
+  if (typeof window === "undefined" || typeof navigator === "undefined") {
+    return false;
+  }
+  return /PiBrowser/i.test(navigator.userAgent || "") && typeof window.Pi !== "undefined";
+}
+
 export async function initPiSdk(): Promise<boolean> {
   if (typeof window === "undefined" || !window.Pi) {
     return false;
@@ -214,7 +221,12 @@ export async function resumeIncompletePayments(): Promise<number> {
   let resumed = 0;
   const sdkReady = await initPiSdk();
 
-  if (sdkReady && window.Pi && typeof window.Pi.getIncompletePayments === "function") {
+  if (
+    sdkReady &&
+    isRealPiBrowserEnvironment() &&
+    window.Pi &&
+    typeof window.Pi.getIncompletePayments === "function"
+  ) {
     try {
       const pending = await window.Pi.getIncompletePayments();
       if (Array.isArray(pending)) {

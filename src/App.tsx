@@ -33,7 +33,7 @@ import {
   PI_SIGNIN_ERROR_MESSAGE,
   authenticateWithPiSdk,
   initPiSdk,
-  isPiBrowserAvailable,
+  isRealPiBrowserEnvironment,
   logoutPiSession,
   resumeIncompletePayments,
 } from "./lib/piSdk";
@@ -117,7 +117,7 @@ export default function App() {
     void (async () => {
       const sdkReady = await initPiSdk();
       void resumeIncompletePayments();
-      if (active && sdkReady && isPiBrowserAvailable()) {
+      if (active && sdkReady && isRealPiBrowserEnvironment()) {
         const attempt = await authenticateWithPiSdk();
         if (active && attempt.success && attempt.result) {
           setPiConnected(true);

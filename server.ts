@@ -8,12 +8,12 @@ import {
   cancelPiPayment,
   completePiPayment,
   resumeServerIncompletePayments,
-} from "./api/_lib/piPlatform.js";
+} from "./api/_lib/piPlatform.ts";
 import {
   exchangePiAccessToken,
   revokeSessionFromHeader,
   verifySessionFromHeader,
-} from "./api/_lib/piAuth.js";
+} from "./api/_lib/piAuth.ts";
 
 dotenv.config();
 
@@ -47,6 +47,9 @@ async function startServer() {
     const scriptSrc = isProd
       ? "script-src 'self' https://sdk.minepi.com"
       : "script-src 'self' 'unsafe-inline' https://sdk.minepi.com";
+    const connectSrc = isProd
+      ? "connect-src 'self' https://socialchain.app"
+      : "connect-src 'self' ws: wss: https://socialchain.app";
     res.setHeader(
       "Content-Security-Policy",
       [
@@ -55,8 +58,9 @@ async function startServer() {
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' https://fonts.gstatic.com data:",
         "img-src 'self' data: blob:",
-        "connect-src 'self' https://socialchain.app",
-        "frame-ancestors 'self' https://*.pinet.com https://*.minepi.com",
+        connectSrc,
+        "frame-src 'self' https://*.minepi.com https://*.pinet.com https://socialchain.app",
+        "frame-ancestors 'self' https://aistudio.google.com https://*.aistudio.google.com https://*.google.com https://*.googleusercontent.com https://*.usercontent.goog https://*.pinet.com https://*.minepi.com",
       ].join("; ") + ";"
     );
     next();
