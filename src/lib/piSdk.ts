@@ -32,6 +32,7 @@ export interface PiPaymentReceipt {
   memo: string;
   mode: "testnet-sdk";
   status: "Confirmed";
+  grantIssued: boolean;
 }
 
 interface IncompletePiPayment {
@@ -195,26 +196,33 @@ export async function handleIncompletePayment(payment: IncompletePiPayment): Pro
   if (!payment?.identifier) return;
   const paymentId = payment.identifier;
   const txid = payment.transaction?.txid;
+  const token = inMemorySessionToken;
 
   try {
     if (txid && !payment.status?.developer_completed) {
-      const completeRes = await postJsonWithDetails("/api/pi/complete", {
-        paymentId,
-        txid,
-        amount: payment.amount,
-        memo: payment.memo,
-        metadata: payment.metadata ?? {},
-      });
+      const completeRes = await postJsonWithDetails(
+        "/api/pi/complete",
+        { paymentId, txid },
+        token
+      );
       console.log("[EYENEKA Pi] Incomplete /api/pi/complete response:", completeRes);
       return;
     }
     if (!payment.status?.developer_approved) {
-      const approveRes = await postJsonWithDetails("/api/pi/approve", { paymentId });
+      const approveRes = await postJsonWithDetails(
+        "/api/pi/approve",
+        { paymentId },
+        token
+      );
       console.log("[EYENEKA Pi] Incomplete /api/pi/approve response:", approveRes);
       return;
     }
     if (payment.status?.developer_approved && !txid && !payment.status?.cancelled) {
-      const cancelRes = await postJsonWithDetails("/api/pi/cancel", { paymentId });
+      const cancelRes = await postJsonWithDetails(
+        "/api/pi/cancel",
+        { paymentId },
+        token
+      );
       console.log("[EYENEKA Pi] Incomplete /api/pi/cancel response:", cancelRes);
     }
   } catch (err) {
@@ -310,12 +318,12 @@ export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
 
 async function ensurePiPaymentSession(
   onStatusChange?: (statusText: string) => void
-): Promise<void> {
+): Promise<string> {
   if (!window.Pi) {
     throw new Error(PI_BROWSER_REQUIRED_MESSAGE);
   }
-  if (paymentScopeAuthenticated) {
-    return;
+  if (paymentScopeAuthenticated && inMemorySessionToken) {
+    return inMemorySessionToken;
   }
   onStatusChange?.("Authenticating Pi Browser session...");
   const auth = await window.Pi.authenticate(PI_AUTH_SCOPES, (incomplete) => {
@@ -325,10 +333,9 @@ async function ensurePiPaymentSession(
   if (!accessToken) {
     throw new Error("Pi authentication did not return an access token.");
   }
-  if (!inMemorySessionToken) {
-    await exchangeAccessTokenForSession(accessToken);
-  }
+  const session = await exchangeAccessTokenForSession(accessToken);
   paymentScopeAuthenticated = true;
+  return session.sessionToken;
 }
 
 export async function executePiPayment(
@@ -340,13 +347,42 @@ export async function executePiPayment(
     throw new Error(PI_BROWSER_REQUIRED_MESSAGE);
   }
 
+  let sessionToken = "";
   try {
-    await ensurePiPaymentSession(onStatusChange);
+    sessionToken = await ensurePiPaymentSession(onStatusChange);
   } catch (authErr: unknown) {
     const msg = authErr instanceof Error ? authErr.message : String(authErr);
     console.log("[EYENEKA Pi] Session auth before createPayment failed:", authErr);
     throw new Error(`Error: ${msg}`);
   }
+
+  onStatusChange?.("Preparing authoritative U2A order...");
+  const intentRes = await postJsonWithDetails(
+    "/api/pi/intent",
+    {
+      type: payload.metadata.type,
+      itemId: payload.metadata.itemId,
+      amount: payload.amount,
+      memo: payload.memo,
+    },
+    sessionToken
+  );
+  if (
+    !intentRes.ok ||
+    typeof intentRes.data.amount !== "number" ||
+    typeof intentRes.data.memo !== "string" ||
+    !intentRes.data.metadata ||
+    typeof intentRes.data.metadata !== "object"
+  ) {
+    const errMsg =
+      (typeof intentRes.data.error === "string" && intentRes.data.error) ||
+      "Could not prepare server-side U2A payment intent.";
+    throw new Error(`Error: ${errMsg}`);
+  }
+
+  const serverAmount = intentRes.data.amount;
+  const serverMemo = intentRes.data.memo;
+  const serverMetadata = intentRes.data.metadata as Record<string, string | number | boolean>;
 
   return await new Promise<PiPaymentReceipt>((resolve, reject) => {
     let settled = false;
@@ -361,16 +397,20 @@ export async function executePiPayment(
       onStatusChange?.("Opening Pi Wallet...");
       window.Pi!.createPayment(
         {
-          amount: payload.amount,
-          memo: payload.memo,
-          metadata: payload.metadata,
+          amount: serverAmount,
+          memo: serverMemo,
+          metadata: serverMetadata,
         },
         {
           onReadyForServerApproval: async (paymentId) => {
             console.log("[EYENEKA Pi] onReadyForServerApproval paymentId:", paymentId);
             onStatusChange?.("Waiting for approval...");
             try {
-              const res = await postJsonWithDetails("/api/pi/approve", { paymentId });
+              const res = await postJsonWithDetails(
+                "/api/pi/approve",
+                { paymentId },
+                sessionToken
+              );
               console.log("[EYENEKA Pi] /api/pi/approve response:", res);
               if (!res.ok || res.data.ok === false) {
                 const serverMsg =
@@ -388,13 +428,11 @@ export async function executePiPayment(
             console.log("[EYENEKA Pi] onReadyForServerCompletion:", { paymentId, txid });
             onStatusChange?.("Confirming on Pi Testnet...");
             try {
-              const res = await postJsonWithDetails("/api/pi/complete", {
-                paymentId,
-                txid,
-                amount: payload.amount,
-                memo: payload.memo,
-                metadata: payload.metadata,
-              });
+              const res = await postJsonWithDetails(
+                "/api/pi/complete",
+                { paymentId, txid },
+                sessionToken
+              );
               console.log("[EYENEKA Pi] /api/pi/complete response:", res);
               if (!res.ok || res.data.status !== "PAID") {
                 const serverMsg =
@@ -409,10 +447,11 @@ export async function executePiPayment(
                 resolve({
                   paymentId,
                   txHash: txid,
-                  amount: payload.amount,
-                  memo: payload.memo,
+                  amount: serverAmount,
+                  memo: serverMemo,
                   mode: "testnet-sdk",
                   status: "Confirmed",
+                  grantIssued: res.data.grantIssued !== false,
                 });
               }
             } catch (err: unknown) {

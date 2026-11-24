@@ -7,6 +7,7 @@ import {
   approvePiPayment,
   cancelPiPayment,
   completePiPayment,
+  createPaymentIntent,
   resumeServerIncompletePayments,
 } from "./api/_lib/piPlatform.ts";
 import {
@@ -75,9 +76,27 @@ async function startServer() {
     res.json({ ok: true });
   });
 
+  app.post("/api/pi/intent", (req, res) => {
+    const verified = verifySessionFromHeader(req.headers.authorization);
+    if (!verified) {
+      res.status(401).json({ ok: false, error: "Authenticated Pioneer session required." });
+      return;
+    }
+    try {
+      const result = createPaymentIntent((req.body ?? {}) as Record<string, unknown>, verified);
+      res.status(result.status).json(result.body);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to create payment intent.";
+      res.status(500).json({ ok: false, error: message });
+    }
+  });
+
   app.post("/api/pi/approve", async (req, res) => {
     try {
-      const result = await approvePiPayment(String(req.body?.paymentId ?? ""));
+      const result = await approvePiPayment(
+        String(req.body?.paymentId ?? ""),
+        req.headers.authorization
+      );
       res.status(result.status).json(result.body);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Approval request failed.";
@@ -87,13 +106,13 @@ async function startServer() {
 
   app.post("/api/pi/complete", async (req, res) => {
     try {
-      const result = await completePiPayment({
-        paymentId: req.body?.paymentId,
-        txid: req.body?.txid,
-        amount: req.body?.amount,
-        memo: req.body?.memo,
-        metadata: req.body?.metadata,
-      });
+      const result = await completePiPayment(
+        {
+          paymentId: req.body?.paymentId,
+          txid: req.body?.txid,
+        },
+        req.headers.authorization
+      );
       res.status(result.status).json(result.body);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Completion request failed.";

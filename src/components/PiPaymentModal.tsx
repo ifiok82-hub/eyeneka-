@@ -65,11 +65,13 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
         dateIso,
         status: "Confirmed",
       });
-      payment.onComplete({
-        paymentId: res.paymentId,
-        txHash: res.txHash,
-        escrowId,
-      });
+      if (res.grantIssued) {
+        payment.onComplete({
+          paymentId: res.paymentId,
+          txHash: res.txHash,
+          escrowId,
+        });
+      }
     } catch (err: unknown) {
       setStatusMessage(null);
       setError(err instanceof Error ? err.message : `Error: ${String(err)}`);

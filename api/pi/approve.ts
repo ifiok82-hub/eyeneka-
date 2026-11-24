@@ -3,6 +3,7 @@ import { approvePiPayment, parseRequestBody } from "../_lib/piPlatform.js";
 interface ApiReq {
   method?: string;
   body?: unknown;
+  headers?: { authorization?: string; Authorization?: string };
 }
 
 interface ApiRes {
@@ -17,7 +18,8 @@ export default async function handler(req: ApiReq, res: ApiRes) {
 
   try {
     const body = parseRequestBody(req.body);
-    const result = await approvePiPayment(body.paymentId);
+    const authHeader = req.headers?.authorization ?? req.headers?.Authorization;
+    const result = await approvePiPayment(body.paymentId, authHeader);
     res.status(result.status).json(result.body);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Approval request failed.";
