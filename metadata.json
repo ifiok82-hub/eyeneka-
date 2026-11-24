@@ -1,0 +1,8 @@
+{
+  "name": "EYENEKA",
+  "description": "Learn. Work. Earn. Care. Together. Global Pi-native utility platform for verified skills, smart-contract escrow micro-gigs, everyday health navigation, and community savings circles.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
