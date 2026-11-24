@@ -86,8 +86,9 @@ function containsScamOrPhone(text: string, isFirstMessage: boolean): string | nu
 
 function calcEscrowSplit(pricePi: number) {
   const feePi = Number((pricePi * 0.08).toFixed(2));
-  const workerReceivesPi = Number((pricePi - feePi).toFixed(2));
-  return { feePi, workerReceivesPi };
+  const totalPi = Number((pricePi + feePi).toFixed(2));
+  const workerReceivesPi = Number(pricePi.toFixed(2));
+  return { feePi, totalPi, workerReceivesPi };
 }
 
 export const WorkView: React.FC<WorkViewProps> = ({
@@ -449,7 +450,7 @@ export const WorkView: React.FC<WorkViewProps> = ({
                         className={
                           gig.status === "Funds Locked"
                             ? "text-[#16A34A] font-semibold"
-                            : gig.status === "Dispute"
+                            : gig.status === "Disputed"
                             ? "text-red-600 font-semibold"
                             : "text-slate-600 font-medium"
                         }
@@ -623,10 +624,11 @@ export const WorkView: React.FC<WorkViewProps> = ({
                   </div>
 
                   <div className="rounded-lg bg-white border border-slate-200 p-3 text-xs text-slate-800 font-mono-tabular">
-                    Gig Price {activeGig.pricePi.toFixed(2)} π - Eyeneka Service Fee 8% ({split.feePi.toFixed(2)} π) ={" "}
-                    <strong className="text-[#16A34A]">
-                      Worker Receives {split.workerReceivesPi.toFixed(2)} π
-                    </strong>
+                    Gig Price {activeGig.pricePi.toFixed(2)} π + Escrow Fee 8% ({split.feePi.toFixed(2)} π) ={" "}
+                    <strong className="text-[#7C3AED]">
+                      Total {split.totalPi.toFixed(2)} π in Pi
+                    </strong>{" "}
+                    · Worker Receives {split.workerReceivesPi.toFixed(2)} π on approval
                   </div>
 
                   <div className="grid grid-cols-4 gap-2 text-center text-xs">
@@ -637,14 +639,14 @@ export const WorkView: React.FC<WorkViewProps> = ({
                         active:
                           activeGig.status === "Funds Locked" ||
                           activeGig.status === "Proof Submitted" ||
-                          activeGig.status === "Dispute" ||
+                          activeGig.status === "Disputed" ||
                           activeGig.status === "Released",
                       },
                       {
                         label: "3. Proof Sent",
                         active:
                           activeGig.status === "Proof Submitted" ||
-                          activeGig.status === "Dispute" ||
+                          activeGig.status === "Disputed" ||
                           activeGig.status === "Released",
                       },
                       { label: "4. Released", active: activeGig.status === "Released" },
@@ -749,14 +751,14 @@ export const WorkView: React.FC<WorkViewProps> = ({
                   {activeGig.status === "Open" && (
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                       <p className="text-xs text-slate-600">
-                        Step 1: Buyer locks {activeGig.pricePi.toFixed(2)} π into Smart Contract Escrow via Pi.createPayment first so the worker sees "Funds Locked".
+                        Step 1: Buyer locks {split.totalPi.toFixed(2)} π ({activeGig.pricePi.toFixed(2)} π + 8% Escrow Fee {split.feePi.toFixed(2)} π) into Smart Contract Escrow so status becomes "Funds Locked".
                       </p>
                       <button
                         type="button"
                         onClick={() => onLockEscrow(activeGig.id)}
-                        className="min-h-[44px] px-4 rounded-xl bg-[#7C3AED] text-white text-xs font-semibold hover:bg-[#6D28D9] whitespace-nowrap"
+                        className="min-h-[44px] px-4 rounded-xl bg-[#FFC800] text-[#050507] text-xs font-bold hover:bg-[#eab800] whitespace-nowrap"
                       >
-                        Lock {activeGig.pricePi.toFixed(2)} π in Escrow
+                        Pay with Pi (Testnet) · Lock {split.totalPi.toFixed(2)} π
                       </button>
                     </div>
                   )}
@@ -764,7 +766,7 @@ export const WorkView: React.FC<WorkViewProps> = ({
                   {activeGig.status === "Funds Locked" && (
                     <div className="space-y-3">
                       <p className="text-xs font-semibold text-[#16A34A]">
-                        Funds Locked ({activeGig.pricePi.toFixed(2)} π). Worker receives {split.workerReceivesPi.toFixed(2)} π upon approval.
+                        Status: Funds Locked ({split.totalPi.toFixed(2)} π in Escrow). Worker receives {split.workerReceivesPi.toFixed(2)} π upon buyer approval.
                       </p>
                       <textarea
                         rows={2}
@@ -877,44 +879,89 @@ export const WorkView: React.FC<WorkViewProps> = ({
                           }
                           className="min-h-[44px] px-4 rounded-xl border border-red-300 text-red-700 text-xs font-semibold hover:bg-red-50"
                         >
-                          Open 3-Step Dispute
+                          Dispute (Hold Escrow)
                         </button>
                       </div>
                     </div>
                   )}
 
-                  {activeGig.status === "Dispute" && (
+                  {activeGig.status === "Disputed" && (
                     <div className="space-y-3">
                       <p className="text-xs font-semibold text-red-700">
-                        3-Step Mediation Active — Step {activeGig.disputeStep ?? 1} of 3:{" "}
+                        Status: Disputed — Step {activeGig.disputeStep ?? 1} of 3 (
                         {activeGig.disputeStep === 1
                           ? "Direct Structured Chat"
                           : activeGig.disputeStep === 2
                           ? "Community Mediator Reviewing Proof"
-                          : "Final Escrow Decision"}
+                          : "Final Review — Escrow Held"}
+                        ). Funds will NOT auto-release while disputed.
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => onAdvanceDispute(activeGig.id)}
-                        className="min-h-[40px] px-4 rounded-xl bg-slate-900 text-white text-xs font-semibold"
-                      >
-                        {(activeGig.disputeStep ?? 1) < 3
-                          ? "Escalate to Next Mediation Step"
-                          : "Finalize Escrow Resolution"}
-                      </button>
+                      {(activeGig.disputeStep ?? 1) < 3 && (
+                        <button
+                          type="button"
+                          onClick={() => onAdvanceDispute(activeGig.id)}
+                          className="min-h-[40px] px-4 rounded-xl bg-slate-900 text-white text-xs font-semibold"
+                        >
+                          Escalate to Next Mediation Step
+                        </button>
+                      )}
                     </div>
                   )}
 
                   {activeGig.status === "Released" && (
-                    <div className="space-y-1 text-xs sm:text-sm font-semibold text-[#16A34A]">
-                      <div className="flex items-center gap-2">
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2 text-xs sm:text-sm font-semibold text-[#16A34A]">
                         <CheckCircle2 className="w-5 h-5" />
-                        <span>
-                          Gig Price {activeGig.pricePi.toFixed(2)} π - Eyeneka Service Fee 8% ({split.feePi.toFixed(2)} π) = Worker Receives {split.workerReceivesPi.toFixed(2)} π
-                        </span>
+                        <span>Escrow Released to Worker · Status: Confirmed</span>
+                      </div>
+                      <div className="rounded-xl bg-slate-50 border border-slate-200 p-3.5 space-y-1.5 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Amount</span>
+                          <span className="font-mono-tabular font-semibold text-slate-900">
+                            {split.workerReceivesPi.toFixed(2)} π
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Fee (8%)</span>
+                          <span className="font-mono-tabular text-slate-900">
+                            {split.feePi.toFixed(2)} π
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Escrow ID</span>
+                          <span className="font-mono-tabular text-slate-900">
+                            {activeGig.escrowId || activeGig.id}
+                          </span>
+                        </div>
+                        {activeGig.paymentId && (
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-500">Payment ID</span>
+                            <span className="font-mono-tabular text-slate-900 break-all text-right">
+                              {activeGig.paymentId}
+                            </span>
+                          </div>
+                        )}
+                        {activeGig.txHash && (
+                          <div className="flex justify-between gap-2">
+                            <span className="text-slate-500">TXID</span>
+                            <span className="font-mono-tabular text-slate-900 break-all text-right">
+                              {activeGig.txHash}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Date</span>
+                          <span className="font-mono-tabular text-slate-900">
+                            {activeGig.releasedAt || new Date().toISOString().slice(0, 10)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">Status</span>
+                          <span className="font-bold text-[#16A34A]">Confirmed</span>
+                        </div>
                       </div>
                       {activeGig.workerRating && (
-                        <p className="text-xs text-slate-600 pl-7">
+                        <p className="text-xs text-slate-600">
                           Rated {activeGig.workerRating}/5{activeGig.buyerReview ? ` · "${activeGig.buyerReview}"` : ""}
                         </p>
                       )}
@@ -1132,15 +1179,21 @@ export const WorkView: React.FC<WorkViewProps> = ({
               {/* Transparent Pre-Post Fee Breakdown */}
               <div className="rounded-xl bg-slate-50 border border-slate-200 p-3.5 space-y-1.5 text-xs">
                 <div className="flex justify-between">
-                  <span className="text-slate-600">Gig Escrow Price</span>
+                  <span className="text-slate-600">Gig Price</span>
                   <span className="font-mono-tabular font-semibold text-slate-900">
                     {parsedNewPrice.toFixed(2)} π
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-slate-600">Eyeneka Service Fee 8% (auto-deducted at release)</span>
+                  <span className="text-slate-600">Escrow Fee (8%)</span>
                   <span className="font-mono-tabular text-slate-700">
-                    -{previewSplit.feePi.toFixed(2)} π
+                    +{previewSplit.feePi.toFixed(2)} π
+                  </span>
+                </div>
+                <div className="flex justify-between font-semibold text-slate-900">
+                  <span>Total in Pi (Escrow Lock)</span>
+                  <span className="font-mono-tabular text-[#7C3AED]">
+                    {previewSplit.totalPi.toFixed(2)} π
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -1159,7 +1212,9 @@ export const WorkView: React.FC<WorkViewProps> = ({
                 )}
                 <div className="flex justify-between pt-1 border-t border-slate-200 font-bold text-slate-900">
                   <span>Total Escrow + Boost</span>
-                  <span className="font-mono-tabular">{totalWithBoost.toFixed(2)} π</span>
+                  <span className="font-mono-tabular">
+                    {Number((previewSplit.totalPi + (boost24h ? 0.2 : 0)).toFixed(2)).toFixed(2)} π
+                  </span>
                 </div>
               </div>
 
@@ -1174,7 +1229,7 @@ export const WorkView: React.FC<WorkViewProps> = ({
                 className="min-h-[48px] w-full rounded-xl bg-[#7C3AED] text-white text-sm font-semibold hover:bg-[#6D28D9]"
               >
                 {boost24h
-                  ? "Pay 0.20 π Boost & Publish Gig"
+                  ? "Pay with Pi (Testnet) · 0.20 π Boost & Publish"
                   : "Publish Gig to Escrow Marketplace"}
               </button>
             </form>

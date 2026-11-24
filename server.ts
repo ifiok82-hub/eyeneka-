@@ -3,6 +3,11 @@ import dotenv from "dotenv";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI, ThinkingLevel } from "@google/genai";
+import {
+  approvePiPayment,
+  completePiPayment,
+  resumeServerIncompletePayments,
+} from "./api/_lib/piPlatform.js";
 
 dotenv.config();
 
@@ -32,6 +37,42 @@ async function startServer() {
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", app: "EYENEKA" });
+  });
+
+  app.post("/api/pi/approve", async (req, res) => {
+    try {
+      const result = await approvePiPayment(String(req.body?.paymentId ?? ""));
+      res.status(result.status).json(result.body);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Approval request failed.";
+      res.status(500).json({ ok: false, error: message });
+    }
+  });
+
+  app.post("/api/pi/complete", async (req, res) => {
+    try {
+      const result = await completePiPayment({
+        paymentId: req.body?.paymentId,
+        txid: req.body?.txid,
+        amount: req.body?.amount,
+        memo: req.body?.memo,
+        metadata: req.body?.metadata,
+      });
+      res.status(result.status).json(result.body);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Completion request failed.";
+      res.status(500).json({ ok: false, error: message });
+    }
+  });
+
+  app.post("/api/pi/incomplete", async (_req, res) => {
+    try {
+      const result = await resumeServerIncompletePayments();
+      res.status(result.status).json(result.body);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Incomplete payment check failed.";
+      res.status(500).json({ ok: false, error: message });
+    }
   });
 
   app.post("/api/mentor", async (req, res) => {

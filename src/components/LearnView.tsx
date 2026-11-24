@@ -715,7 +715,7 @@ export const LearnView: React.FC<LearnViewProps> = ({
                     >
                       <Award className="w-4 h-4" />
                       <span>
-                        Get Verified Certificate - {activeLesson.certificateFeePi.toFixed(2)} π
+                        Pay with Pi (Testnet) · Get Verified Certificate ({activeLesson.certificateFeePi.toFixed(2)} π)
                       </span>
                     </button>
                   )}

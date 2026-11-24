@@ -72,7 +72,7 @@ export type EscrowStatus =
   | "Applied"
   | "Funds Locked"
   | "Proof Submitted"
-  | "Dispute"
+  | "Disputed"
   | "Released";
 
 export interface GigMessage {
@@ -97,6 +97,9 @@ export interface Gig {
   checklist: string[];
   status: EscrowStatus;
   escrowId?: string;
+  paymentId?: string;
+  txHash?: string;
+  releasedAt?: string;
   featured?: boolean;
   featuredUntil?: string;
   disputeStep?: 1 | 2 | 3;
@@ -234,6 +237,8 @@ export type TxCategory =
   | "Boosts"
   | "Circles"
   | "Care Listing"
+  | "Card"
+  | "Test"
   | "Ads";
 
 export interface WalletTransaction {
@@ -248,14 +253,18 @@ export interface WalletTransaction {
     | "Circle Contribution"
     | "Circle Leader Premium"
     | "Care Partner Listing"
+    | "Card Renewal"
+    | "Pi Testnet Payment"
     | "Ad Support";
   label: string;
   amountPi: number;
   feePi?: number;
   direction: "in" | "out" | "locked";
+  status?: "Confirmed" | "Locked";
   timestamp: string;
   dateIso: string;
   escrowId: string;
+  paymentId?: string;
   txHash: string;
 }
 

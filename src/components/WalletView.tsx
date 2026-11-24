@@ -10,7 +10,11 @@ import {
   X,
 } from "lucide-react";
 import { TxCategory, WalletTransaction } from "../types";
-import { triggerPiAd } from "../lib/piSdk";
+import {
+  PI_BROWSER_REQUIRED_MESSAGE,
+  isPiBrowserAvailable,
+  triggerPiAd,
+} from "../lib/piSdk";
 
 interface WalletViewProps {
   piConnected: boolean;
@@ -25,7 +29,12 @@ interface WalletViewProps {
   totalEarnedByPioneersPi: number;
   transactions: WalletTransaction[];
   onConnectPi: () => void;
-  onQuickPaymentTest: (amountPi: number, memo: string) => void;
+  onQuickPaymentTest: (
+    amountPi: number,
+    memo: string,
+    paymentType?: "test" | "card",
+    itemId?: string
+  ) => void;
   onRecordAdSupport: () => void;
 }
 
@@ -36,6 +45,8 @@ const TX_FILTERS: ("All" | TxCategory)[] = [
   "Boosts",
   "Circles",
   "Care Listing",
+  "Card",
+  "Test",
   "Ads",
 ];
 
@@ -115,7 +126,7 @@ export const WalletView: React.FC<WalletViewProps> = ({
         </div>
 
         <div className="flex flex-wrap gap-3 shrink-0">
-          {!piConnected ? (
+          {!piConnected && (
             <button
               type="button"
               onClick={onConnectPi}
@@ -124,20 +135,47 @@ export const WalletView: React.FC<WalletViewProps> = ({
               <Wallet className="w-4 h-4" />
               <span>Login with Pi</span>
             </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() =>
-                onQuickPaymentTest(0.1, "EYENEKA Real Pi SDK Payment Check")
-              }
-              className="min-h-[48px] px-5 rounded-xl bg-[#7C3AED] text-white text-sm font-semibold hover:bg-[#6D28D9] inline-flex items-center gap-2"
-            >
-              <ShieldCheck className="w-4 h-4" />
-              <span>Execute 0.10 π Pi.createPayment</span>
-            </button>
           )}
+          <button
+            type="button"
+            onClick={() =>
+              onQuickPaymentTest(
+                1.0,
+                "Eyeneka - Test Payment (1 Pi)",
+                "test",
+                "core-team-test"
+              )
+            }
+            className="min-h-[48px] px-5 rounded-xl bg-[#7C3AED] text-white text-sm font-semibold hover:bg-[#6D28D9] inline-flex items-center gap-2"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Pay with Pi (Testnet) · 1.00 π</span>
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              onQuickPaymentTest(
+                0.2,
+                "Eyeneka - Card Renewal (0.2 Pi)",
+                "card",
+                "card-renewal"
+              )
+            }
+            className="min-h-[48px] px-4 rounded-xl bg-white/10 border border-white/20 text-white text-xs font-semibold hover:bg-white/15 inline-flex items-center gap-2"
+          >
+            <span>Pay with Pi (Testnet) · Card Renewal 0.20 π</span>
+          </button>
         </div>
       </section>
+
+      {!isPiBrowserAvailable() && (
+        <div
+          role="alert"
+          className="rounded-2xl bg-amber-50 border border-amber-300 px-5 py-3.5 text-xs font-semibold text-amber-900"
+        >
+          {PI_BROWSER_REQUIRED_MESSAGE}
+        </div>
+      )}
 
       {/* 6 Real-Only Pi Balance & Fee Cards */}
       <section className="grid grid-cols-2 lg:grid-cols-3 gap-4">
@@ -364,8 +402,28 @@ export const WalletView: React.FC<WalletViewProps> = ({
               </div>
               <div className="rounded-xl bg-slate-50 border border-slate-200 p-4 space-y-2 text-xs">
                 <div className="flex justify-between gap-2">
+                  <span className="text-slate-500">Status</span>
+                  <span className="font-bold text-[#16A34A]">
+                    {selectedReceipt.status ?? "Confirmed"}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2">
                   <span className="text-slate-500">Purpose</span>
                   <span className="font-semibold text-slate-900 text-right">{selectedReceipt.label}</span>
+                </div>
+                {selectedReceipt.paymentId && (
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-500">Payment ID</span>
+                    <span className="font-mono-tabular text-slate-900 text-right break-all max-w-[210px]">
+                      {selectedReceipt.paymentId}
+                    </span>
+                  </div>
+                )}
+                <div className="flex justify-between gap-2">
+                  <span className="text-slate-500">TXID</span>
+                  <span className="font-mono-tabular text-slate-900 text-right break-all max-w-[210px]">
+                    {selectedReceipt.txHash}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-500">Date</span>
@@ -377,16 +435,16 @@ export const WalletView: React.FC<WalletViewProps> = ({
                 </div>
                 {typeof selectedReceipt.feePi === "number" && selectedReceipt.feePi > 0 && (
                   <div className="flex justify-between">
-                    <span className="text-slate-500">Platform Fee Paid</span>
+                    <span className="text-slate-500">Fee</span>
                     <span className="font-mono-tabular font-semibold text-slate-900">
                       {selectedReceipt.feePi.toFixed(2)} π
                     </span>
                   </div>
                 )}
                 <div className="flex justify-between items-center pt-2 border-t border-slate-200">
-                  <span className="text-slate-500">Pi Explorer</span>
+                  <span className="text-slate-500">Pi Testnet Explorer</span>
                   <a
-                    href={`https://blockexplorer.minepi.com/tx/${selectedReceipt.txHash}`}
+                    href={`https://blockexplorer.minepi.com/testnet/tx/${selectedReceipt.txHash}`}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 font-semibold text-[#7C3AED] hover:underline font-mono-tabular"

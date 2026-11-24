@@ -248,7 +248,7 @@ export const SaveView: React.FC<SaveViewProps> = ({
             onClick={onUpgradeCircleLeader}
             className="min-h-[44px] px-5 rounded-xl bg-[#FFC800] text-[#050507] text-xs font-bold hover:bg-[#eab800] whitespace-nowrap shrink-0"
           >
-            Circle Leader - 0.5 π/month
+            Pay with Pi (Testnet) · Circle Leader (0.50 π/mo)
           </button>
         ) : (
           <button

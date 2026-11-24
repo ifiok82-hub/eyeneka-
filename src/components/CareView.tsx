@@ -1111,7 +1111,7 @@ export const CareView: React.FC<CareViewProps> = ({
                     type="submit"
                     className="min-h-[48px] w-full rounded-xl bg-[#FFC800] text-[#050507] text-sm font-bold hover:bg-[#eab800]"
                   >
-                    Continue to Pay 0.50 π/month
+                    Pay with Pi (Testnet) · 0.50 π/month
                   </button>
                 </form>
               </div>

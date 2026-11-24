@@ -33,6 +33,7 @@ import {
   PI_SIGNIN_ERROR_MESSAGE,
   authenticateWithPiSdk,
   initPiSdk,
+  resumeIncompletePayments,
 } from "./lib/piSdk";
 import { Header } from "./components/Header";
 import { BottomNav } from "./components/BottomNav";
@@ -111,6 +112,7 @@ export default function App() {
 
   useEffect(() => {
     initPiSdk();
+    void resumeIncompletePayments();
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (raw) {
@@ -464,18 +466,23 @@ export default function App() {
 
   const handleMintCertificate = (lesson: Lesson, onMinted: (cert: CertificateRecord) => void) => {
     const certId = `CRT-${Date.now().toString().slice(-5)}`;
+    const certFee = lesson.certificateFeePi || 0.3;
     setPendingPayment({
-      title: "Mint Verified Certificate",
+      title: "Verified Certificate (Testnet)",
       purpose: `Verified Certificate: ${lesson.title} (+10 Trust Score)`,
-      amountPi: lesson.certificateFeePi,
+      amountPi: certFee,
       breakdown: [
         { label: `Free Lesson & Skill Test (${lesson.skillUnlock})`, amountPi: 0 },
-        { label: "Verified QR Certificate + Trust +10", amountPi: lesson.certificateFeePi },
+        { label: "Verified QR Certificate + Trust +10", amountPi: certFee },
       ],
-      memo: `EYENEKA Verified Certificate: ${lesson.title}`,
-      metadata: { lessonId: lesson.id, skill: lesson.skillUnlock },
+      memo: `Eyeneka - Verified Certificate (${lesson.skillUnlock})`,
+      metadata: {
+        type: "certificate",
+        itemId: lesson.id,
+        buyer: username || "pioneer",
+      },
       escrowId: certId,
-      onComplete: ({ txHash, escrowId }) => {
+      onComplete: ({ paymentId, txHash, escrowId }) => {
         const newCert: CertificateRecord = {
           id: `cert-${Date.now()}`,
           lessonId: lesson.id,
@@ -483,7 +490,7 @@ export default function App() {
           skillUnlock: lesson.skillUnlock,
           issuedAt: new Date().toISOString().slice(0, 10),
           txHash,
-          feePi: lesson.certificateFeePi,
+          feePi: certFee,
         };
         setCertificates((prev) => [...prev, newCert]);
         setLessons((prev) =>
@@ -492,7 +499,7 @@ export default function App() {
               ? {
                   ...l,
                   completionsCount: (l.completionsCount ?? 0) + 1,
-                  earningsPi: Number(((l.earningsPi ?? 0) + lesson.certificateFeePi).toFixed(2)),
+                  earningsPi: Number(((l.earningsPi ?? 0) + certFee).toFixed(2)),
                 }
               : l
           )
@@ -504,12 +511,14 @@ export default function App() {
             category: "Certificates",
             type: "Certificate Mint",
             label: `Verified Certificate: ${lesson.title}`,
-            amountPi: lesson.certificateFeePi,
-            feePi: lesson.certificateFeePi,
+            amountPi: certFee,
+            feePi: certFee,
             direction: "out",
+            status: "Confirmed",
             timestamp: "Just now",
             dateIso: new Date().toISOString().slice(0, 10),
             escrowId,
+            paymentId,
             txHash,
           },
           ...prev,
@@ -560,13 +569,17 @@ export default function App() {
       purpose: `24h FEATURED Boost: ${payload.title}`,
       amountPi: 0.2,
       breakdown: [
-        { label: "Top-of-Marketplace 24h FEATURED Boost", amountPi: 0.2 },
-        { label: "Escrow Deposit (locked separately when gig begins)", amountPi: payload.pricePi },
+        { label: "Featured Boost (24h)", amountPi: 0.2 },
+        { label: "Gig Price (locked separately in Escrow)", amountPi: payload.pricePi },
       ],
-      memo: `EYENEKA Featured Gig Boost: ${payload.title}`,
-      metadata: { boost24h: true },
+      memo: "Eyeneka - Featured Boost",
+      metadata: {
+        type: "boost",
+        itemId: escrowId,
+        buyer: username || "pioneer",
+      },
       escrowId: `BST-${Date.now().toString().slice(-5)}`,
-      onComplete: ({ txHash, escrowId: boostRef }) => {
+      onComplete: ({ paymentId, txHash, escrowId: boostRef }) => {
         setTransactions((prev) => [
           {
             id: `tx-${Date.now()}`,
@@ -576,9 +589,11 @@ export default function App() {
             amountPi: 0.2,
             feePi: 0.2,
             direction: "out",
+            status: "Confirmed",
             timestamp: "Just now",
             dateIso: new Date().toISOString().slice(0, 10),
             escrowId: boostRef,
+            paymentId,
             txHash,
           },
           ...prev,
@@ -592,46 +607,63 @@ export default function App() {
     const target = gigs.find((g) => g.id === gigId);
     if (!target) return;
     const feePi = Number((target.pricePi * 0.08).toFixed(2));
-    const netPi = Number((target.pricePi - feePi).toFixed(2));
+    const totalEscrowPi = Number((target.pricePi + feePi).toFixed(2));
     const escrowId = target.escrowId || `ESC-${Date.now().toString().slice(-5)}`;
 
     setPendingPayment({
       title: "Lock Pi in Smart Contract Escrow",
-      purpose: `Escrow Lock: ${target.title}`,
-      amountPi: target.pricePi,
+      purpose: `Gig Escrow: ${target.title}`,
+      amountPi: totalEscrowPi,
       breakdown: [
-        { label: "Gig Escrow Deposit", amountPi: target.pricePi },
-        { label: "Eyeneka Service Fee 8% (deducted on release)", amountPi: feePi },
-        { label: "Worker Receives on Approval", amountPi: netPi },
+        { label: "Gig Price", amountPi: target.pricePi },
+        { label: "Escrow Fee (8%)", amountPi: feePi },
+        { label: "Total in Pi", amountPi: totalEscrowPi },
       ],
-      memo: `EYENEKA Escrow Lock: ${target.title}`,
-      metadata: { gigId: target.id, escrowId },
+      memo: `Eyeneka - Gig Escrow (${target.title})`,
+      metadata: {
+        type: "gig_escrow",
+        itemId: target.id,
+        buyer: username || "pioneer",
+      },
       escrowId,
-      onComplete: ({ txHash, escrowId: refId }) => {
+      onComplete: ({ paymentId, txHash, escrowId: refId }) => {
         setGigs((prev) =>
-          prev.map((g) => (g.id === gigId ? { ...g, status: "Funds Locked", escrowId: refId } : g))
+          prev.map((g) =>
+            g.id === gigId
+              ? {
+                  ...g,
+                  status: "Funds Locked",
+                  escrowId: refId,
+                  paymentId,
+                  txHash,
+                }
+              : g
+          )
         );
         setTransactions((prev) => [
           {
             id: `tx-${Date.now()}`,
             category: "Gigs",
             type: "Escrow Lock",
-            label: `Locked: ${target.title}`,
-            amountPi: target.pricePi,
+            label: `Funds Locked: ${target.title} (${target.pricePi.toFixed(2)} π + 8% Fee ${feePi.toFixed(2)} π)`,
+            amountPi: totalEscrowPi,
+            feePi,
             direction: "locked",
+            status: "Locked",
             timestamp: "Just now",
             dateIso: new Date().toISOString().slice(0, 10),
             escrowId: refId,
+            paymentId,
             txHash,
           },
           ...prev,
         ]);
         addNotification(
           `Funds Locked (${refId})`,
-          `${target.pricePi.toFixed(2)} π locked in Smart Contract Escrow for "${target.title}".`,
+          `${totalEscrowPi.toFixed(2)} π locked in Smart Contract Escrow for "${target.title}".`,
           "work"
         );
-        showToast(`Funds Locked (${target.pricePi.toFixed(2)} π) in Smart Contract Escrow.`);
+        showToast(`Funds Locked (${totalEscrowPi.toFixed(2)} π) in Smart Contract Escrow.`);
       },
     });
   };
@@ -657,15 +689,16 @@ export default function App() {
           : g
       )
     );
-    showToast("Deliverable proof submitted. 48h buyer review window started.");
+    showToast("Deliverable proof submitted. Buyer review started.");
   };
 
   const handleReleaseEscrow = (gigId: string, rating: number, reviewText: string) => {
     const target = gigs.find((g) => g.id === gigId);
     if (!target) return;
     const feePi = Number((target.pricePi * 0.08).toFixed(2));
-    const workerNetPi = Number((target.pricePi - feePi).toFixed(2));
+    const workerPayoutPi = Number(target.pricePi.toFixed(2));
     const escrowId = target.escrowId || `ESC-${Date.now().toString().slice(-5)}`;
+    const releaseDate = new Date().toISOString().slice(0, 10);
     const trustGain = rating >= 4 ? 15 : 10;
 
     setGigs((prev) =>
@@ -674,33 +707,36 @@ export default function App() {
           ? {
               ...g,
               status: "Released",
+              releasedAt: releaseDate,
               workerRating: rating,
               buyerReview: reviewText || undefined,
             }
           : g
       )
     );
-    setAvailablePi((p) => Number((p + workerNetPi).toFixed(2)));
-    setEarnedMonthPi((p) => Number((p + workerNetPi).toFixed(2)));
+    setAvailablePi((p) => Number((p + workerPayoutPi).toFixed(2)));
+    setEarnedMonthPi((p) => Number((p + workerPayoutPi).toFixed(2)));
     setTrustScore((s) => Math.min(100, s + trustGain));
     setTransactions((prev) => [
       {
         id: `tx-${Date.now()}`,
         category: "Gigs",
         type: "Gig Payout",
-        label: `Completed: ${target.title} (${target.pricePi.toFixed(2)} π - 8% Fee ${feePi.toFixed(2)} π)`,
-        amountPi: workerNetPi,
+        label: `Confirmed Release: ${target.title} (Amount ${workerPayoutPi.toFixed(2)} π · Fee ${feePi.toFixed(2)} π)`,
+        amountPi: workerPayoutPi,
         feePi,
         direction: "in",
+        status: "Confirmed",
         timestamp: "Just now",
-        dateIso: new Date().toISOString().slice(0, 10),
+        dateIso: releaseDate,
         escrowId,
-        txHash: `pi_rel_${Date.now().toString(16)}`,
+        paymentId: target.paymentId,
+        txHash: target.txHash || escrowId,
       },
       ...prev,
     ]);
     showToast(
-      `Escrow released! Worker receives ${workerNetPi.toFixed(2)} π · Trust Score +${trustGain}.`
+      `Escrow released! Worker receives ${workerPayoutPi.toFixed(2)} π · Status: Confirmed.`
     );
   };
 
@@ -708,17 +744,18 @@ export default function App() {
     setGigs((prev) =>
       prev.map((g) => {
         if (g.id !== gigId) return g;
-        if (g.status !== "Dispute") {
-          return { ...g, status: "Dispute", disputeStep: 1, disputeReason: reason };
+        if (g.status !== "Disputed") {
+          return { ...g, status: "Disputed", disputeStep: 1, disputeReason: reason };
         }
         const currentStep = g.disputeStep ?? 1;
         if (currentStep < 3) {
           return { ...g, disputeStep: (currentStep + 1) as 1 | 2 | 3 };
         }
-        return { ...g, status: "Released" };
+        // Never auto-release disputed escrow
+        return g;
       })
     );
-    showToast("Mediation step updated transparently.");
+    showToast("Gig status set to Disputed. Escrow remains locked — no auto-release.");
   };
 
   const handleSendGigMessage = (gigId: string, text: string) => {
@@ -821,10 +858,14 @@ export default function App() {
         { label: "Care Partner Listing Fee (1 Month)", amountPi: 0.5 },
         { label: `Document Submitted (${partner.documentName})`, amountPi: 0 },
       ],
-      memo: `EYENEKA Care Partner Listing: ${partner.name}`,
-      metadata: { type: "care-partner", name: partner.name },
+      memo: `Eyeneka - Care Partner (${partner.name})`,
+      metadata: {
+        type: "care",
+        itemId: partner.name.slice(0, 40),
+        buyer: username || "pioneer",
+      },
       escrowId: `CARE-${Date.now().toString().slice(-5)}`,
-      onComplete: ({ txHash, escrowId }) => {
+      onComplete: ({ paymentId, txHash, escrowId }) => {
         setResources((prev) => [
           {
             id: `cr-${Date.now()}`,
@@ -850,9 +891,11 @@ export default function App() {
             amountPi: 0.5,
             feePi: 0.5,
             direction: "out",
+            status: "Confirmed",
             timestamp: "Just now",
             dateIso: new Date().toISOString().slice(0, 10),
             escrowId,
+            paymentId,
             txHash,
           },
           ...prev,
@@ -936,10 +979,14 @@ export default function App() {
         { label: "Circle Leader Subscription (1 Month)", amountPi: 0.5 },
         { label: "Cancel anytime · No refund beyond current month", amountPi: 0 },
       ],
-      memo: "EYENEKA Circle Leader Premium (0.5 π/month)",
-      metadata: { plan: "circle-leader" },
+      memo: "Eyeneka - Circle Leader (0.5 Pi/month)",
+      metadata: {
+        type: "circle",
+        itemId: "circle-leader-monthly",
+        buyer: username || "pioneer",
+      },
       escrowId: `CIRL-${Date.now().toString().slice(-5)}`,
-      onComplete: ({ txHash, escrowId }) => {
+      onComplete: ({ paymentId, txHash, escrowId }) => {
         setCircleLeaderActive(true);
         setTransactions((prev) => [
           {
@@ -950,9 +997,11 @@ export default function App() {
             amountPi: 0.5,
             feePi: 0.5,
             direction: "out",
+            status: "Confirmed",
             timestamp: "Just now",
             dateIso: new Date().toISOString().slice(0, 10),
             escrowId,
+            paymentId,
             txHash,
           },
           ...prev,
@@ -1053,10 +1102,14 @@ export default function App() {
       breakdown: [
         { label: "Rotating Savings Pool Contribution (0% Interest)", amountPi: target.contributionPi },
       ],
-      memo: `EYENEKA Circle Contribution: ${target.name}`,
-      metadata: { circleId },
+      memo: `Eyeneka - Circle Contribution (${target.name})`,
+      metadata: {
+        type: "circle",
+        itemId: circleId,
+        buyer: username || "pioneer",
+      },
       escrowId: `CIR-${Date.now().toString().slice(-5)}`,
-      onComplete: ({ txHash, escrowId }) => {
+      onComplete: ({ paymentId, txHash, escrowId }) => {
         setCircles((prev) =>
           prev.map((c) => {
             if (c.id !== circleId) return c;
@@ -1078,9 +1131,11 @@ export default function App() {
             label: `${target.name} · Cycle ${target.currentCycle}`,
             amountPi: target.contributionPi,
             direction: "out",
+            status: "Confirmed",
             timestamp: "Just now",
             dateIso: new Date().toISOString().slice(0, 10),
             escrowId,
+            paymentId,
             txHash,
           },
           ...prev,
@@ -1188,31 +1243,42 @@ export default function App() {
   };
 
   // Wallet handlers
-  const handleQuickPaymentTest = (amountPi: number, memo: string) => {
+  const handleQuickPaymentTest = (
+    amountPi: number,
+    memo: string,
+    paymentType: "test" | "card" = "test",
+    itemId = "core-team-test"
+  ) => {
     setPendingPayment({
-      title: "Pi SDK Payment",
+      title: paymentType === "card" ? "Pioneer Card Renewal (0.20 π)" : "Pi Testnet Payment (1.00 π)",
       purpose: memo,
       amountPi,
-      memo,
-      metadata: { type: "pi-payment" },
-      escrowId: `PAY-${Date.now().toString().slice(-5)}`,
-      onComplete: ({ txHash, escrowId }) => {
+      memo: `Eyeneka - ${paymentType === "card" ? "Card Renewal" : "Test Payment"}`,
+      metadata: {
+        type: paymentType,
+        itemId,
+        buyer: username || "pioneer",
+      },
+      escrowId: `${paymentType === "card" ? "CRD" : "TST"}-${Date.now().toString().slice(-5)}`,
+      onComplete: ({ paymentId, txHash, escrowId }) => {
         setTransactions((prev) => [
           {
             id: `tx-${Date.now()}`,
-            category: "Gigs",
-            type: "Gig Payout",
+            category: paymentType === "card" ? "Card" : "Test",
+            type: paymentType === "card" ? "Card Renewal" : "Pi Testnet Payment",
             label: memo,
             amountPi,
             direction: "out",
+            status: "Confirmed",
             timestamp: "Just now",
             dateIso: new Date().toISOString().slice(0, 10),
             escrowId,
+            paymentId,
             txHash,
           },
           ...prev,
         ]);
-        showToast(`Pi.createPayment completed (${txHash.slice(0, 12)}...)`);
+        showToast(`Payment Complete in Pi Testnet (${txHash.slice(0, 12)}...)`);
       },
     });
   };
@@ -1289,7 +1355,7 @@ export default function App() {
   };
 
   const lockedEscrowPi = gigs
-    .filter((g) => g.status === "Funds Locked" || g.status === "Proof Submitted" || g.status === "Dispute")
+    .filter((g) => g.status === "Funds Locked" || g.status === "Proof Submitted" || g.status === "Disputed")
     .reduce((sum, g) => sum + g.pricePi, 0);
 
   const savedCirclesPi = transactions
