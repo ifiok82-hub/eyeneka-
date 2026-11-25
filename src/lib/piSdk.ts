@@ -209,12 +209,15 @@ function formatServerFailure(
   res: { status: number; data: Record<string, unknown> },
   fallback: string
 ): string {
+  const piStatus =
+    typeof res.data.piStatus === "number" ? res.data.piStatus : res.status;
+  const detailsText = extractDetailsText(res.data.details);
   const errMsg =
     (typeof res.data.error === "string" && res.data.error.trim()) || fallback;
-  const detailsText = extractDetailsText(res.data.details);
-  const suffix =
-    detailsText && detailsText !== errMsg ? ` — ${detailsText}` : "";
-  return `${prefix}: ${res.status} ${errMsg}${suffix}`;
+  if (detailsText) {
+    return `${prefix}: ${piStatus} - ${detailsText}`;
+  }
+  return `${prefix}: ${piStatus} - ${errMsg}`;
 }
 
 async function exchangeAccessTokenForSession(accessToken: string): Promise<{
@@ -476,6 +479,8 @@ export async function executePiPayment(
     };
 
     try {
+      const createPaymentStartMs = Date.now();
+      console.log("[EYENEKA Pi] createPayment-start", { ts: createPaymentStartMs });
       onStatusChange?.("Waiting for Pi Wallet...");
       window.Pi!.createPayment(
         {
@@ -485,23 +490,37 @@ export async function executePiPayment(
         },
         {
           onReadyForServerApproval: async (paymentId) => {
+            const approveStartMs = Date.now();
+            const idPrefix = String(paymentId || "").slice(0, 8);
+            console.log("[EYENEKA Pi] approve-start", {
+              ts: approveStartMs,
+              sinceCreateMs: approveStartMs - createPaymentStartMs,
+              paymentIdPrefix: idPrefix,
+            });
             clearWalletTimer();
-            console.log("[EYENEKA Pi] onReadyForServerApproval paymentId:", paymentId);
             if (approvedOrInFlightPaymentIds.has(paymentId)) {
-              console.log("[EYENEKA Pi] Skipping duplicate /api/pi/approve for:", paymentId);
+              console.warn("[EYENEKA Pi] Duplicate approve prevented for prefix:", idPrefix);
               return;
             }
             approvedOrInFlightPaymentIds.add(paymentId);
             onStatusChange?.("Waiting for Pi Wallet...");
             try {
-              const res = await postJsonWithDetails("/api/pi/approve", { paymentId });
-              console.log("[EYENEKA Pi] /api/pi/approve response:", res);
+              const res = await postJsonWithDetails("/api/pi/approve", {
+                paymentId,
+                clientApproveStartMs: approveStartMs,
+              });
+              console.log("[EYENEKA Pi] /api/pi/approve response:", {
+                paymentIdPrefix: idPrefix,
+                status: res.status,
+                ok: res.ok,
+                data: res.data,
+              });
               if (!res.ok || res.data.ok === false) {
                 approvedOrInFlightPaymentIds.delete(paymentId);
                 failOnce(
                   new Error(
                     formatServerFailure(
-                      "Server approve failed",
+                      "Pi approve failed",
                       res,
                       "Approval rejected by Pi Platform API"
                     )
@@ -510,16 +529,25 @@ export async function executePiPayment(
               }
             } catch (err: unknown) {
               approvedOrInFlightPaymentIds.delete(paymentId);
-              console.log("[EYENEKA Pi] /api/pi/approve network error:", err);
+              console.log("[EYENEKA Pi] /api/pi/approve network error:", {
+                paymentIdPrefix: idPrefix,
+                err,
+              });
               const msg = err instanceof Error ? err.message : String(err);
-              failOnce(new Error(`Server approve failed: 500 ${msg}`));
+              failOnce(new Error(`Pi approve failed: 500 - ${msg}`));
             }
           },
           onReadyForServerCompletion: async (paymentId, txid) => {
+            const completeStartMs = Date.now();
+            const idPrefix = String(paymentId || "").slice(0, 8);
             clearWalletTimer();
-            console.log("[EYENEKA Pi] onReadyForServerCompletion:", { paymentId, txid });
+            console.log("[EYENEKA Pi] complete-start", {
+              ts: completeStartMs,
+              paymentIdPrefix: idPrefix,
+              hasTxid: Boolean(txid),
+            });
             if (completedOrInFlightPaymentIds.has(paymentId)) {
-              console.log("[EYENEKA Pi] Skipping duplicate /api/pi/complete for:", paymentId);
+              console.warn("[EYENEKA Pi] Duplicate complete prevented for prefix:", idPrefix);
               return;
             }
             completedOrInFlightPaymentIds.add(paymentId);
@@ -529,13 +557,18 @@ export async function executePiPayment(
                 paymentId,
                 txid,
               });
-              console.log("[EYENEKA Pi] /api/pi/complete response:", res);
+              console.log("[EYENEKA Pi] /api/pi/complete response:", {
+                paymentIdPrefix: idPrefix,
+                status: res.status,
+                ok: res.ok,
+                data: res.data,
+              });
               if (!res.ok || res.data.ok === false) {
                 completedOrInFlightPaymentIds.delete(paymentId);
                 failOnce(
                   new Error(
                     formatServerFailure(
-                      "Server complete failed",
+                      "Pi complete failed",
                       res,
                       "Completion rejected by Pi Platform API"
                     )
@@ -558,9 +591,12 @@ export async function executePiPayment(
               }
             } catch (err: unknown) {
               completedOrInFlightPaymentIds.delete(paymentId);
-              console.log("[EYENEKA Pi] /api/pi/complete network error:", err);
+              console.log("[EYENEKA Pi] /api/pi/complete network error:", {
+                paymentIdPrefix: idPrefix,
+                err,
+              });
               const msg = err instanceof Error ? err.message : String(err);
-              failOnce(new Error(`Server complete failed: 500 ${msg}`));
+              failOnce(new Error(`Pi complete failed: 500 - ${msg}`));
             }
           },
           onCancel: (paymentId) => {

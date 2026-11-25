@@ -85,7 +85,11 @@ export const Footer: React.FC<FooterProps> = ({ onTestPaymentComplete }) => {
             ) : status === "error" && errorMsg ? (
               <>
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                <span className="break-words">Pi payment failed: {errorMsg}</span>
+                <span className="break-words">
+                  {errorMsg.startsWith("Pi approve failed") || errorMsg.startsWith("Pi complete failed")
+                    ? errorMsg
+                    : `Pi payment failed: ${errorMsg}`}
+                </span>
               </>
             ) : (
               <>
