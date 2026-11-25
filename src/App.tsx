@@ -602,7 +602,6 @@ import {
   PI_SIGNIN_ERROR_MESSAGE,
   authenticateWithPiSdk,
   initPiSdk,
-  isRealPiBrowserEnvironment,
   logoutPiSession,
   resumeIncompletePayments,
 } from "./lib/piSdk";
@@ -683,19 +682,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    let active = true;
     void (async () => {
       const sdkReady = await initPiSdk();
-      void resumeIncompletePayments();
-      if (active && sdkReady && isRealPiBrowserEnvironment()) {
-        const attempt = await authenticateWithPiSdk();
-        if (active && attempt.success && attempt.result) {
-          setPiConnected(true);
-          setUsername(attempt.result.username);
-          setKycVerified(attempt.result.kycVerified);
-          setInPiBrowser(true);
-          setAuthError(null);
-        }
+      if (sdkReady) {
+        void resumeIncompletePayments();
       }
     })();
 
@@ -733,9 +723,6 @@ export default function App() {
       // Ignore malformed cache
     }
     setHydrated(true);
-    return () => {
-      active = false;
-    };
   }, []);
 
   useEffect(() => {
@@ -856,7 +843,10 @@ export default function App() {
     showToast(`Welcome, Pioneer @${auth.username}`);
   };
 
-  const handleOpenPiConnect = async () => {
+  const handleEnsurePiConnected = async (): Promise<{ connected: boolean; error?: string }> => {
+    if (piConnected && username) {
+      return { connected: true };
+    }
     setAuthError(null);
     const attempt = await authenticateWithPiSdk();
     if (attempt.success && attempt.result) {
@@ -865,11 +855,18 @@ export default function App() {
         kycVerified: attempt.result.kycVerified,
         inPiBrowser: true,
       });
-      return;
+      return { connected: true };
     }
     const errMsg = attempt.error ?? PI_SIGNIN_ERROR_MESSAGE;
     setAuthError(errMsg);
-    setAuthModalOpen(true);
+    return { connected: false, error: errMsg };
+  };
+
+  const handleOpenPiConnect = async () => {
+    const res = await handleEnsurePiConnected();
+    if (!res.connected) {
+      setAuthModalOpen(true);
+    }
   };
 
   // Admin Publisher handler (Home)
@@ -2254,6 +2251,8 @@ export default function App() {
       />
 
       <Footer
+        piConnected={piConnected && Boolean(username)}
+        onEnsureConnected={handleEnsurePiConnected}
         onTestPaymentComplete={(receipt) => {
           setTransactions((prev) => [
             {

@@ -123,45 +123,89 @@ export async function exchangePiAccessToken(rawBody: Record<string, unknown>): P
     };
   }
 
-  const response = await fetch(APP_STUDIO_LOGIN_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ accessToken }),
-  });
+  let verifiedUid = "";
+  let verifiedUsername = "";
+  let lastStatus = 401;
+  let lastError = "Pi Sign-In failed. Try again in Pi Browser.";
 
-  const data = (await response.json().catch(() => ({}))) as {
-    sessionToken?: unknown;
-    user?: { uid?: unknown; username?: unknown };
-    error?: unknown;
-    message?: unknown;
-  };
-
-  if (!response.ok) {
-    const errMsg =
-      (typeof data.error === "string" && data.error) ||
-      (typeof data.message === "string" && data.message) ||
-      "Pi Sign-In failed. Try again in Pi Browser.";
-    return {
-      status: response.status >= 400 ? response.status : 401,
-      body: { ok: false, error: errMsg },
+  // 1. Primary official verification: GET https://api.minepi.com/v2/me
+  try {
+    const meRes = await fetch("https://api.minepi.com/v2/me", {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      signal: AbortSignal.timeout(12000),
+    });
+    const meData = (await meRes.json().catch(() => ({}))) as {
+      uid?: unknown;
+      username?: unknown;
+      error?: unknown;
+      error_message?: unknown;
+      message?: unknown;
     };
+    if (meRes.ok) {
+      verifiedUid = typeof meData.uid === "string" ? meData.uid.trim() : "";
+      verifiedUsername =
+        typeof meData.username === "string"
+          ? meData.username.trim().replace(/^@/, "")
+          : "";
+    } else {
+      lastStatus = meRes.status >= 400 ? meRes.status : 401;
+      lastError =
+        (typeof meData.error_message === "string" && meData.error_message) ||
+        (typeof meData.error === "string" && meData.error) ||
+        (typeof meData.message === "string" && meData.message) ||
+        lastError;
+    }
+  } catch (err: unknown) {
+    lastError = err instanceof Error && err.message ? err.message : lastError;
   }
 
-  const verifiedUid =
-    typeof data.user?.uid === "string" ? data.user.uid.trim() : "";
-  const verifiedUsername =
-    typeof data.user?.username === "string"
-      ? data.user.username.trim().replace(/^@/, "")
-      : "";
+  // 2. Fallback: App Studio login verification endpoint if /v2/me did not verify
+  if (!verifiedUid || !verifiedUsername) {
+    try {
+      const response = await fetch(APP_STUDIO_LOGIN_URL, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ accessToken }),
+        signal: AbortSignal.timeout(12000),
+      });
+
+      const data = (await response.json().catch(() => ({}))) as {
+        sessionToken?: unknown;
+        user?: { uid?: unknown; username?: unknown };
+        error?: unknown;
+        message?: unknown;
+      };
+
+      if (response.ok) {
+        verifiedUid =
+          typeof data.user?.uid === "string" ? data.user.uid.trim() : "";
+        verifiedUsername =
+          typeof data.user?.username === "string"
+            ? data.user.username.trim().replace(/^@/, "")
+            : "";
+      } else {
+        lastStatus = response.status >= 400 ? response.status : lastStatus;
+        lastError =
+          (typeof data.error === "string" && data.error) ||
+          (typeof data.message === "string" && data.message) ||
+          lastError;
+      }
+    } catch (err: unknown) {
+      lastError = err instanceof Error && err.message ? err.message : lastError;
+    }
+  }
 
   if (!verifiedUid || !verifiedUsername) {
     return {
-      status: 502,
+      status: lastStatus,
       body: {
         ok: false,
-        error: "App Studio login did not return a verified Pi identity.",
+        error: lastError,
       },
     };
   }

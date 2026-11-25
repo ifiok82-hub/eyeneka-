@@ -1,22 +1,78 @@
 import React, { useState } from "react";
 import { AlertCircle, CheckCircle2, ExternalLink, Loader2, ShieldCheck } from "lucide-react";
-import { PI_CANCELLED_MESSAGE, PiPaymentCancelledError, PiPaymentReceipt, payUserToApp } from "../lib/piSdk";
+import {
+  PI_CANCELLED_MESSAGE,
+  PI_SDK_NOT_FOUND_MESSAGE,
+  PiPaymentCancelledError,
+  PiPaymentReceipt,
+  isPiBrowserAvailable,
+  payUserToApp,
+} from "../lib/piSdk";
 
 interface FooterProps {
+  piConnected?: boolean;
+  onEnsureConnected?: () => Promise<{ connected: boolean; error?: string }>;
   onTestPaymentComplete?: (receipt: PiPaymentReceipt) => void;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onTestPaymentComplete }) => {
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "cancelled" | "error">("idle");
+export const Footer: React.FC<FooterProps> = ({
+  piConnected = false,
+  onEnsureConnected,
+  onTestPaymentComplete,
+}) => {
+  const [status, setStatus] = useState<
+    "idle" | "connecting" | "waiting" | "success" | "cancelled" | "error"
+  >("idle");
+  const [helperNotice, setHelperNotice] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<PiPaymentReceipt | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  const isBusy = status === "connecting" || status === "waiting";
+
   const handleTestPayment = async () => {
-    setStatus("loading");
     setErrorMsg(null);
+    setHelperNotice(null);
     setReceipt(null);
+
+    if (!isPiBrowserAvailable()) {
+      setErrorMsg(PI_SDK_NOT_FOUND_MESSAGE);
+      setStatus("error");
+      return;
+    }
+
+    if (!piConnected) {
+      setStatus("connecting");
+      setHelperNotice("Tap Connect Pi first");
+      try {
+        const authRes = onEnsureConnected
+          ? await onEnsureConnected()
+          : { connected: false, error: "Tap Connect Pi first" };
+
+        if (authRes.connected) {
+          setStatus("idle");
+          setHelperNotice("Connected! Tap again to pay 1 Pi in Pi Wallet.");
+        } else {
+          setErrorMsg(authRes.error || "Tap Connect Pi first");
+          setStatus("error");
+        }
+      } catch (err: unknown) {
+        const realError =
+          err instanceof Error && err.message ? err.message : "Tap Connect Pi first";
+        setErrorMsg(realError);
+        setStatus("error");
+      }
+      return;
+    }
+
+    setStatus("waiting");
     try {
-      const result = await payUserToApp();
+      const result = await payUserToApp((sdkStatus) => {
+        if (sdkStatus.toLowerCase().includes("connecting")) {
+          setStatus("connecting");
+        } else {
+          setStatus("waiting");
+        }
+      });
       setReceipt(result);
       setStatus("success");
       if (result.grantIssued) {
@@ -38,6 +94,19 @@ export const Footer: React.FC<FooterProps> = ({ onTestPaymentComplete }) => {
     }
   };
 
+  const formatErrorBanner = (msg: string) => {
+    if (
+      msg === PI_SDK_NOT_FOUND_MESSAGE ||
+      msg.startsWith("Pi login timed out.")
+    ) {
+      return msg;
+    }
+    if (msg.startsWith("Pi approve failed") || msg.startsWith("Pi complete failed")) {
+      return msg;
+    }
+    return `Pi payment failed: ${msg} - Tap Connect Pi first`;
+  };
+
   return (
     <footer className="border-t border-white/10 bg-[#050507] text-slate-300 py-8 mb-16 md:mb-0">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 flex flex-col items-center text-center gap-4">
@@ -53,7 +122,7 @@ export const Footer: React.FC<FooterProps> = ({ onTestPaymentComplete }) => {
         <div className="w-full max-w-md flex flex-col items-center gap-2">
           <button
             type="button"
-            disabled={status === "loading"}
+            disabled={isBusy}
             onClick={handleTestPayment}
             className={`min-h-[48px] w-full sm:w-auto px-5 py-3 rounded-xl text-xs sm:text-sm font-bold transition-colors inline-flex items-center justify-center gap-2 shadow-lg disabled:opacity-70 ${
               status === "success"
@@ -65,7 +134,12 @@ export const Footer: React.FC<FooterProps> = ({ onTestPaymentComplete }) => {
                 : "bg-[#FFC800] text-[#050507] hover:bg-[#eab800]"
             }`}
           >
-            {status === "loading" ? (
+            {status === "connecting" ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                <span>Connecting to Pi...</span>
+              </>
+            ) : status === "waiting" ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin shrink-0" />
                 <span>Waiting for Pi Wallet...</span>
@@ -85,11 +159,7 @@ export const Footer: React.FC<FooterProps> = ({ onTestPaymentComplete }) => {
             ) : status === "error" && errorMsg ? (
               <>
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                <span className="break-words">
-                  {errorMsg.startsWith("Pi approve failed") || errorMsg.startsWith("Pi complete failed")
-                    ? errorMsg
-                    : `Pi payment failed: ${errorMsg}`}
-                </span>
+                <span className="break-words">{formatErrorBanner(errorMsg)}</span>
               </>
             ) : (
               <>
@@ -98,6 +168,12 @@ export const Footer: React.FC<FooterProps> = ({ onTestPaymentComplete }) => {
               </>
             )}
           </button>
+
+          {helperNotice && (
+            <p className="text-xs font-semibold text-[#FFC800]">
+              {helperNotice}
+            </p>
+          )}
 
           {status === "success" && receipt?.txHash && (
             <a
