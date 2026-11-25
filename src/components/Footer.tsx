@@ -1,13 +1,13 @@
 import React, { useState } from "react";
 import { AlertCircle, CheckCircle2, ExternalLink, Loader2, ShieldCheck } from "lucide-react";
-import { PiPaymentReceipt, payUserToApp } from "../lib/piSdk";
+import { PI_CANCELLED_MESSAGE, PiPaymentCancelledError, PiPaymentReceipt, payUserToApp } from "../lib/piSdk";
 
 interface FooterProps {
   onTestPaymentComplete?: (receipt: PiPaymentReceipt) => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({ onTestPaymentComplete }) => {
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "loading" | "success" | "cancelled" | "error">("idle");
   const [receipt, setReceipt] = useState<PiPaymentReceipt | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -23,6 +23,10 @@ export const Footer: React.FC<FooterProps> = ({ onTestPaymentComplete }) => {
         onTestPaymentComplete?.(result);
       }
     } catch (err: unknown) {
+      if (err instanceof PiPaymentCancelledError) {
+        setStatus("cancelled");
+        return;
+      }
       const realError =
         err instanceof Error && err.message
           ? err.message
@@ -56,6 +60,8 @@ export const Footer: React.FC<FooterProps> = ({ onTestPaymentComplete }) => {
                 ? "bg-[#16A34A] text-white"
                 : status === "error"
                 ? "bg-red-600 text-white hover:bg-red-700"
+                : status === "cancelled"
+                ? "bg-slate-700 text-white hover:bg-slate-600"
                 : "bg-[#FFC800] text-[#050507] hover:bg-[#eab800]"
             }`}
           >
@@ -67,12 +73,19 @@ export const Footer: React.FC<FooterProps> = ({ onTestPaymentComplete }) => {
             ) : status === "success" && receipt ? (
               <>
                 <CheckCircle2 className="w-4 h-4 shrink-0" />
-                <span>Test Payment Complete - {receipt.paymentId}</span>
+                <span className="break-all">
+                  Test Payment Complete - {receipt.paymentId} txid: {receipt.txHash}
+                </span>
+              </>
+            ) : status === "cancelled" ? (
+              <>
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{PI_CANCELLED_MESSAGE}</span>
               </>
             ) : status === "error" && errorMsg ? (
               <>
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                <span>Pi payment failed: {errorMsg}</span>
+                <span className="break-words">Pi payment failed: {errorMsg}</span>
               </>
             ) : (
               <>

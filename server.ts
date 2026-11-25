@@ -93,30 +93,24 @@ async function startServer() {
 
   app.post("/api/pi/approve", async (req, res) => {
     try {
-      const result = await approvePiPayment(
-        String(req.body?.paymentId ?? ""),
-        req.headers.authorization
-      );
+      const result = await approvePiPayment(String(req.body?.paymentId ?? ""));
       res.status(result.status).json(result.body);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Approval request failed.";
-      res.status(500).json({ ok: false, error: message });
+      res.status(500).json({ ok: false, error: message, details: message });
     }
   });
 
   app.post("/api/pi/complete", async (req, res) => {
     try {
-      const result = await completePiPayment(
-        {
-          paymentId: req.body?.paymentId,
-          txid: req.body?.txid,
-        },
-        req.headers.authorization
-      );
+      const result = await completePiPayment({
+        paymentId: req.body?.paymentId,
+        txid: req.body?.txid,
+      });
       res.status(result.status).json(result.body);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Completion request failed.";
-      res.status(500).json({ ok: false, error: message });
+      res.status(500).json({ ok: false, status: "FAILED", error: message, details: message });
     }
   });
 

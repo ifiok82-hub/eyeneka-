@@ -2,11 +2,15 @@ import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { verifySessionFromHeader, type VerifiedPiUser } from "./piAuth.ts";
 
 const PI_PLATFORM_API_BASE = "https://api.minepi.com/v2";
 const PAYMENT_ID_PATTERN = /^[A-Za-z0-9_-]{4,128}$/;
 const TXID_PATTERN = /^[A-Za-z0-9_-]{4,256}$/;
+
+export interface PiSessionActor {
+  uid: string;
+  username: string;
+}
 
 export type AllowedU2AProductType =
   | "certificate"
@@ -47,23 +51,6 @@ export interface PiOrderRecord {
   createdAt: string;
   approvedAt?: string;
   completedAt?: string;
-}
-
-interface PiPlatformPayment {
-  identifier?: string;
-  user_uid?: string;
-  amount?: number;
-  memo?: string;
-  metadata?: Record<string, unknown>;
-  direction?: string;
-  transaction?: { txid?: string; verified?: boolean } | null;
-  status?: {
-    developer_approved?: boolean;
-    transaction_verified?: boolean;
-    developer_completed?: boolean;
-    cancelled?: boolean;
-    user_cancelled?: boolean;
-  };
 }
 
 function getPiApiKey(): string | null {
@@ -123,16 +110,16 @@ function readOrders(): PiOrderRecord[] {
 }
 
 function writeOrders(orders: PiOrderRecord[]): void {
-  const filePath = getOrdersFilePath();
-  fs.writeFileSync(filePath, JSON.stringify(orders, null, 2), "utf8");
+  try {
+    const filePath = getOrdersFilePath();
+    fs.writeFileSync(filePath, JSON.stringify(orders, null, 2), "utf8");
+  } catch {
+    // Non-fatal on ephemeral or read-only serverless filesystems
+  }
 }
 
 function findOrderByPaymentId(paymentId: string): PiOrderRecord | undefined {
   return readOrders().find((o) => o.paymentId === paymentId);
-}
-
-function findOrderByIntentId(intentId: string): PiOrderRecord | undefined {
-  return readOrders().find((o) => o.intentId === intentId);
 }
 
 function upsertOrder(record: PiOrderRecord): PiOrderRecord {
@@ -161,7 +148,21 @@ function extractPiErrorMessage(data: Record<string, unknown>, fallback: string):
   if (typeof data.error === "string" && data.error.trim()) {
     return data.error.trim();
   }
+  if (typeof data.raw === "string" && data.raw.trim()) {
+    return data.raw.trim().slice(0, 200);
+  }
   return fallback;
+}
+
+function sanitizeMetadata(raw: unknown): Record<string, string | number | boolean> {
+  const safeMetadata: Record<string, string | number | boolean> = {};
+  if (!raw || typeof raw !== "object") return safeMetadata;
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+      safeMetadata[k] = v;
+    }
+  }
+  return safeMetadata;
 }
 
 function roundPi(amount: number): number {
@@ -252,32 +253,9 @@ function resolveAuthoritativeOffer(params: {
   }
 }
 
-function validateCatalogAmount(
-  productType: AllowedU2AProductType,
-  amount: number
-): boolean {
-  if (!Number.isFinite(amount) || amount <= 0) return false;
-  switch (productType) {
-    case "boost":
-    case "card":
-      return Math.abs(amount - 0.2) < 0.0001;
-    case "care":
-      return Math.abs(amount - 0.5) < 0.0001;
-    case "test":
-    case "test_payment":
-      return Math.abs(amount - 1.0) < 0.0001;
-    case "certificate":
-      return amount >= 0.0999 && amount <= 0.5001;
-    case "gig_escrow":
-      return amount >= 0.1999 && amount <= 500.0001;
-    case "circle":
-      return amount >= 0.0999 && amount <= 500.0001;
-  }
-}
-
 export function createPaymentIntent(
   rawBody: Record<string, unknown>,
-  verifiedUser: VerifiedPiUser
+  verifiedUser: PiSessionActor
 ): { status: number; body: Record<string, unknown> } {
   const rawType = typeof rawBody.type === "string" ? rawBody.type.trim() : "";
   if (!ALLOWED_PRODUCT_TYPES.has(rawType as AllowedU2AProductType)) {
@@ -336,214 +314,39 @@ export function createPaymentIntent(
   };
 }
 
-async function fetchPiPaymentFromPlatform(
-  paymentId: string,
-  apiKey: string
-): Promise<
-  | { ok: true; payment: PiPlatformPayment }
-  | { ok: false; status: number; error: string }
-> {
-  const res = await fetch(
-    `${PI_PLATFORM_API_BASE}/payments/${encodeURIComponent(paymentId)}`,
-    {
-      method: "GET",
-      headers: {
-        Authorization: `Key ${apiKey}`,
-      },
-    }
-  );
-  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!res.ok) {
-    return {
-      ok: false,
-      status: res.status >= 400 ? res.status : 502,
-      error: extractPiErrorMessage(
-        data,
-        res.statusText || "Failed to retrieve payment from Pi Platform API."
-      ),
-    };
-  }
-  return { ok: true, payment: data as unknown as PiPlatformPayment };
-}
-
-function validatePlatformPaymentForU2A(params: {
-  payment: PiPlatformPayment;
-  verifiedUser: VerifiedPiUser | null;
-  linkedOrder?: PiOrderRecord;
-}): { ok: true; productType: AllowedU2AProductType; itemId: string; amount: number } | { ok: false; status: number; error: string } {
-  const { payment, verifiedUser, linkedOrder } = params;
-
-  if (payment.direction && payment.direction !== "user_to_app") {
-    return {
-      ok: false,
-      status: 400,
-      error: `Invalid payment direction (${payment.direction}). Expected user_to_app.`,
-    };
-  }
-
-  if (verifiedUser && payment.user_uid && payment.user_uid !== verifiedUser.uid) {
-    return {
-      ok: false,
-      status: 403,
-      error: "Payment user_uid does not match the authenticated Pioneer session.",
-    };
-  }
-
-  const amount = typeof payment.amount === "number" ? payment.amount : NaN;
-  if (!Number.isFinite(amount) || amount <= 0) {
-    return {
-      ok: false,
-      status: 400,
-      error: "Pi Platform payment did not contain a valid positive amount.",
-    };
-  }
-
-  const rawType =
-    typeof payment.metadata?.type === "string" ? payment.metadata.type.trim() : "";
-  const productType: AllowedU2AProductType = ALLOWED_PRODUCT_TYPES.has(
-    rawType as AllowedU2AProductType
-  )
-    ? (rawType as AllowedU2AProductType)
-    : linkedOrder?.productType ?? "test";
-
-  const itemId =
-    typeof payment.metadata?.itemId === "string" && payment.metadata.itemId.trim()
-      ? payment.metadata.itemId.trim().slice(0, 80)
-      : linkedOrder?.itemId ?? productType;
-
-  if (linkedOrder) {
-    if (linkedOrder.userUid && payment.user_uid && linkedOrder.userUid !== payment.user_uid) {
-      return {
-        ok: false,
-        status: 403,
-        error: "Payment user_uid does not match server order owner.",
-      };
-    }
-    if (Math.abs(amount - linkedOrder.expectedAmount) > 0.0001) {
-      return {
-        ok: false,
-        status: 400,
-        error: `Payment amount (${amount}) does not match server order amount (${linkedOrder.expectedAmount}).`,
-      };
-    }
-    if (linkedOrder.productType !== productType) {
-      return {
-        ok: false,
-        status: 400,
-        error: "Payment metadata product type mismatch.",
-      };
-    }
-  } else if (!validateCatalogAmount(productType, amount)) {
-    return {
-      ok: false,
-      status: 400,
-      error: `Payment amount (${amount}) failed server catalog validation for ${productType}.`,
-    };
-  }
-
-  return { ok: true, productType, itemId, amount };
-}
-
-export async function approvePiPayment(
-  paymentId: unknown,
-  authHeader?: unknown
-): Promise<{
+export async function approvePiPayment(paymentId: unknown): Promise<{
   status: number;
   body: Record<string, unknown>;
 }> {
   if (!isValidPaymentId(paymentId)) {
-    return { status: 400, body: { ok: false, error: "Invalid paymentId format." } };
-  }
-
-  let verifiedUser: VerifiedPiUser | null = null;
-  if (typeof authHeader === "string" && authHeader.trim()) {
-    verifiedUser = verifySessionFromHeader(authHeader);
-    if (!verifiedUser) {
-      return { status: 401, body: { ok: false, error: "Unauthorized Pioneer session." } };
-    }
+    return {
+      status: 400,
+      body: {
+        ok: false,
+        error: "Invalid paymentId format.",
+        details: "Expected a non-empty alphanumeric Pi paymentId.",
+      },
+    };
   }
 
   const apiKey = getPiApiKey();
   if (!apiKey) {
+    console.error(
+      "[EYENEKA Pi Approve] Missing server Pi API key env var (checked PI_NETWORK_API_KEY and PI_API_KEY)."
+    );
     return {
       status: 500,
       body: {
         ok: false,
-        error: "PI_NETWORK_API_KEY is not configured on the server.",
+        error: "PI_NETWORK_API_KEY / PI_API_KEY is not configured on the server.",
+        details: "Set PI_NETWORK_API_KEY or PI_API_KEY in Vercel Environment Variables.",
       },
     };
   }
 
   const cleanId = paymentId.trim();
-  const lookup = await fetchPiPaymentFromPlatform(cleanId, apiKey);
-  if (!lookup.ok) {
-    return {
-      status: lookup.status,
-      body: { ok: false, piStatus: lookup.status, error: lookup.error },
-    };
-  }
-
-  const platformPayment = lookup.payment;
-  const intentId =
-    typeof platformPayment.metadata?.intentId === "string"
-      ? platformPayment.metadata.intentId.trim()
-      : "";
-  const linkedOrder =
-    findOrderByPaymentId(cleanId) || (intentId ? findOrderByIntentId(intentId) : undefined);
-
-  const check = validatePlatformPaymentForU2A({
-    payment: platformPayment,
-    verifiedUser,
-    linkedOrder,
-  });
-  if (!check.ok) {
-    return { status: check.status, body: { ok: false, error: check.error } };
-  }
-
-  const baseRecord: PiOrderRecord = linkedOrder ?? {
-    intentId: intentId || `INT-RECOVERY-${cleanId}`,
-    direction: "user_to_app",
-    userUid: platformPayment.user_uid || verifiedUser?.uid,
-    username: verifiedUser?.username,
-    productType: check.productType,
-    itemId: check.itemId,
-    expectedAmount: check.amount,
-    amount: check.amount,
-    memo:
-      typeof platformPayment.memo === "string"
-        ? platformPayment.memo
-        : "Eyeneka Pi Payment",
-    metadata: sanitizeMetadata(platformPayment.metadata),
-    status: "CREATED",
-    granted: false,
-    createdAt: new Date().toISOString(),
-  };
-
-  if (platformPayment.status?.developer_approved || baseRecord.status === "APPROVED" || baseRecord.status === "PAID") {
-    upsertOrder({
-      ...baseRecord,
-      paymentId: cleanId,
-      status: baseRecord.status === "PAID" ? "PAID" : "APPROVED",
-      approvedAt: baseRecord.approvedAt ?? new Date().toISOString(),
-    });
-    return {
-      status: 200,
-      body: {
-        ok: true,
-        approved: true,
-        alreadyApproved: true,
-        paymentId: cleanId,
-        payment: platformPayment,
-      },
-    };
-  }
-
-  // Persist paymentId before calling irreversible approve
-  upsertOrder({
-    ...baseRecord,
-    paymentId: cleanId,
-    status: "APPROVAL_REQUESTED",
-  });
+  const idPrefix = cleanId.slice(0, 8);
+  console.log(`[EYENEKA Pi Approve] Calling Pi Platform /approve for paymentId=${idPrefix}...`);
 
   const response = await fetch(
     `${PI_PLATFORM_API_BASE}/payments/${encodeURIComponent(cleanId)}/approve`,
@@ -553,14 +356,26 @@ export async function approvePiPayment(
         Authorization: `Key ${apiKey}`,
         "Content-Type": "application/json",
       },
+      body: JSON.stringify({}),
     }
   );
 
-  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  const rawText = await response.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = rawText ? (JSON.parse(rawText) as Record<string, unknown>) : {};
+  } catch {
+    data = { raw: rawText };
+  }
+
   if (!response.ok) {
     const errMsg = extractPiErrorMessage(
       data,
       response.statusText || "Pi Platform API payment approval failed."
+    );
+    const details = rawText ? rawText.slice(0, 500) : errMsg;
+    console.error(
+      `[EYENEKA Pi Approve] Failed paymentId=${idPrefix}... piStatus=${response.status} body=${details}`
     );
     return {
       status: response.status >= 400 ? response.status : 502,
@@ -568,80 +383,117 @@ export async function approvePiPayment(
         ok: false,
         piStatus: response.status,
         error: errMsg,
+        details,
       },
     };
   }
 
+  if (typeof data.direction === "string" && data.direction !== "user_to_app") {
+    return {
+      status: 400,
+      body: {
+        ok: false,
+        error: `Unexpected payment direction (${data.direction}). Expected user_to_app.`,
+        details: rawText.slice(0, 500),
+      },
+    };
+  }
+
+  const existing = findOrderByPaymentId(cleanId);
+  const rawType =
+    typeof (data.metadata as Record<string, unknown> | undefined)?.type === "string"
+      ? String((data.metadata as Record<string, unknown>).type).trim()
+      : "";
+  const productType: AllowedU2AProductType = ALLOWED_PRODUCT_TYPES.has(
+    rawType as AllowedU2AProductType
+  )
+    ? (rawType as AllowedU2AProductType)
+    : existing?.productType ?? "test_payment";
+  const amount = typeof data.amount === "number" ? data.amount : existing?.amount ?? 1;
+
   upsertOrder({
-    ...baseRecord,
+    ...(existing ?? {
+      intentId: `INT-${cleanId}`,
+      direction: "user_to_app",
+      productType,
+      itemId: productType,
+      expectedAmount: amount,
+      amount,
+      memo: typeof data.memo === "string" ? data.memo : "Eyeneka Pi Payment",
+      metadata: sanitizeMetadata(data.metadata),
+      granted: false,
+      createdAt: new Date().toISOString(),
+    }),
     paymentId: cleanId,
-    status: "APPROVED",
-    approvedAt: new Date().toISOString(),
+    status: existing?.status === "PAID" ? "PAID" : "APPROVED",
+    approvedAt: existing?.approvedAt ?? new Date().toISOString(),
   });
+
+  console.log(
+    `[EYENEKA Pi Approve] Success paymentId=${idPrefix}... piStatus=${response.status}`
+  );
 
   return {
     status: 200,
     body: {
       ok: true,
       approved: true,
-      alreadyApproved: false,
       paymentId: cleanId,
-      payment: data,
+      data,
     },
   };
 }
 
-function sanitizeMetadata(raw: unknown): Record<string, string | number | boolean> {
-  const safeMetadata: Record<string, string | number | boolean> = {};
-  if (!raw || typeof raw !== "object") return safeMetadata;
-  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
-      safeMetadata[k] = v;
-    }
-  }
-  return safeMetadata;
-}
-
-export async function completePiPayment(
-  params: {
-    paymentId: unknown;
-    txid: unknown;
-  },
-  authHeader?: unknown
-): Promise<{
+export async function completePiPayment(params: {
+  paymentId: unknown;
+  txid: unknown;
+}): Promise<{
   status: number;
   body: Record<string, unknown>;
 }> {
   if (!isValidPaymentId(params.paymentId)) {
-    return { status: 400, body: { ok: false, error: "Invalid paymentId format." } };
+    return {
+      status: 400,
+      body: {
+        ok: false,
+        status: "FAILED",
+        error: "Invalid paymentId format.",
+        details: "Expected a non-empty alphanumeric Pi paymentId.",
+      },
+    };
   }
   if (!isValidTxid(params.txid)) {
-    return { status: 400, body: { ok: false, error: "Invalid txid format." } };
-  }
-
-  let verifiedUser: VerifiedPiUser | null = null;
-  if (typeof authHeader === "string" && authHeader.trim()) {
-    verifiedUser = verifySessionFromHeader(authHeader);
-    if (!verifiedUser) {
-      return { status: 401, body: { ok: false, error: "Unauthorized Pioneer session." } };
-    }
+    return {
+      status: 400,
+      body: {
+        ok: false,
+        status: "FAILED",
+        error: "Invalid txid format.",
+        details: "Expected a non-empty blockchain transaction id (txid).",
+      },
+    };
   }
 
   const apiKey = getPiApiKey();
   if (!apiKey) {
+    console.error(
+      "[EYENEKA Pi Complete] Missing server Pi API key env var (checked PI_NETWORK_API_KEY and PI_API_KEY)."
+    );
     return {
       status: 500,
       body: {
         ok: false,
-        error: "PI_NETWORK_API_KEY is not configured on the server.",
+        status: "FAILED",
+        error: "PI_NETWORK_API_KEY / PI_API_KEY is not configured on the server.",
+        details: "Set PI_NETWORK_API_KEY or PI_API_KEY in Vercel Environment Variables.",
       },
     };
   }
 
   const cleanId = params.paymentId.trim();
   const cleanTxid = params.txid.trim();
+  const idPrefix = cleanId.slice(0, 8);
 
-  // Idempotency check: never grant product twice for the same paymentId
   const existingPaid = findOrderByPaymentId(cleanId);
   if (existingPaid?.status === "PAID" && existingPaid.granted) {
     if (existingPaid.txid && existingPaid.txid !== cleanTxid) {
@@ -649,7 +501,9 @@ export async function completePiPayment(
         status: 409,
         body: {
           ok: false,
+          status: "FAILED",
           error: "Payment was already completed with a different txid.",
+          details: `Recorded txid differs from submitted txid for paymentId=${idPrefix}...`,
         },
       };
     }
@@ -662,105 +516,12 @@ export async function completePiPayment(
         grantIssued: false,
         paymentId: cleanId,
         txid: cleanTxid,
-        order: existingPaid,
+        data: existingPaid,
       },
     };
   }
 
-  const lookup = await fetchPiPaymentFromPlatform(cleanId, apiKey);
-  if (!lookup.ok) {
-    return {
-      status: lookup.status,
-      body: {
-        ok: false,
-        status: "FAILED",
-        piStatus: lookup.status,
-        error: lookup.error,
-      },
-    };
-  }
-
-  const platformPayment = lookup.payment;
-  if (platformPayment.transaction?.txid && platformPayment.transaction.txid !== cleanTxid) {
-    return {
-      status: 400,
-      body: {
-        ok: false,
-        status: "FAILED",
-        error: "Submitted txid does not match Pi Platform transaction txid.",
-      },
-    };
-  }
-
-  const intentId =
-    typeof platformPayment.metadata?.intentId === "string"
-      ? platformPayment.metadata.intentId.trim()
-      : "";
-  const linkedOrder =
-    existingPaid || (intentId ? findOrderByIntentId(intentId) : undefined);
-
-  const check = validatePlatformPaymentForU2A({
-    payment: platformPayment,
-    verifiedUser,
-    linkedOrder,
-  });
-  if (!check.ok) {
-    return {
-      status: check.status,
-      body: { ok: false, status: "FAILED", error: check.error },
-    };
-  }
-
-  // Persist paymentId before calling Pi Platform /complete
-  const pendingRecord: PiOrderRecord = linkedOrder ?? {
-    intentId: intentId || `INT-RECOVERY-${cleanId}`,
-    direction: "user_to_app",
-    userUid: platformPayment.user_uid || verifiedUser?.uid,
-    username: verifiedUser?.username,
-    productType: check.productType,
-    itemId: check.itemId,
-    expectedAmount: check.amount,
-    amount: check.amount,
-    memo:
-      typeof platformPayment.memo === "string"
-        ? platformPayment.memo
-        : "Eyeneka Pi Payment",
-    metadata: sanitizeMetadata(platformPayment.metadata),
-    status: "APPROVED",
-    granted: false,
-    createdAt: new Date().toISOString(),
-  };
-
-  upsertOrder({
-    ...pendingRecord,
-    paymentId: cleanId,
-    txid: cleanTxid,
-  });
-
-  if (platformPayment.status?.developer_completed) {
-    const finalized = upsertOrder({
-      ...pendingRecord,
-      paymentId: cleanId,
-      txid: cleanTxid,
-      amount: check.amount,
-      status: "PAID",
-      granted: true,
-      completedAt: new Date().toISOString(),
-    });
-    return {
-      status: 200,
-      body: {
-        ok: true,
-        status: "PAID",
-        alreadyCompleted: false,
-        grantIssued: true,
-        paymentId: cleanId,
-        txid: cleanTxid,
-        order: finalized,
-        payment: platformPayment,
-      },
-    };
-  }
+  console.log(`[EYENEKA Pi Complete] Calling Pi Platform /complete for paymentId=${idPrefix}...`);
 
   const response = await fetch(
     `${PI_PLATFORM_API_BASE}/payments/${encodeURIComponent(cleanId)}/complete`,
@@ -774,11 +535,22 @@ export async function completePiPayment(
     }
   );
 
-  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  const rawText = await response.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = rawText ? (JSON.parse(rawText) as Record<string, unknown>) : {};
+  } catch {
+    data = { raw: rawText };
+  }
+
   if (!response.ok) {
     const errMsg = extractPiErrorMessage(
       data,
       response.statusText || "Pi Platform API payment completion failed."
+    );
+    const details = rawText ? rawText.slice(0, 500) : errMsg;
+    console.error(
+      `[EYENEKA Pi Complete] Failed paymentId=${idPrefix}... piStatus=${response.status} body=${details}`
     );
     return {
       status: response.status >= 400 ? response.status : 502,
@@ -787,25 +559,72 @@ export async function completePiPayment(
         status: "FAILED",
         piStatus: response.status,
         error: errMsg,
+        details,
       },
     };
   }
 
-  // Only grant entitlement AFTER Pi Platform API /complete returns HTTP 2xx
-  const completedOrder = upsertOrder({
-    ...pendingRecord,
+  if (typeof data.direction === "string" && data.direction !== "user_to_app") {
+    return {
+      status: 400,
+      body: {
+        ok: false,
+        status: "FAILED",
+        error: `Invalid payment direction (${data.direction}). Expected user_to_app.`,
+        details: rawText.slice(0, 500),
+      },
+    };
+  }
+
+  const txObj = data.transaction as { txid?: unknown } | null | undefined;
+  if (typeof txObj?.txid === "string" && txObj.txid.trim() && txObj.txid.trim() !== cleanTxid) {
+    return {
+      status: 400,
+      body: {
+        ok: false,
+        status: "FAILED",
+        error: "Submitted txid does not match Pi Platform transaction txid.",
+        details: rawText.slice(0, 500),
+      },
+    };
+  }
+
+  const rawType =
+    typeof (data.metadata as Record<string, unknown> | undefined)?.type === "string"
+      ? String((data.metadata as Record<string, unknown>).type).trim()
+      : "";
+  const productType: AllowedU2AProductType = ALLOWED_PRODUCT_TYPES.has(
+    rawType as AllowedU2AProductType
+  )
+    ? (rawType as AllowedU2AProductType)
+    : existingPaid?.productType ?? "test_payment";
+  const amount = typeof data.amount === "number" ? data.amount : existingPaid?.amount ?? 1;
+
+  upsertOrder({
+    ...(existingPaid ?? {
+      intentId: `INT-${cleanId}`,
+      direction: "user_to_app",
+      productType,
+      itemId: productType,
+      expectedAmount: amount,
+      amount,
+      memo: typeof data.memo === "string" ? data.memo : "Eyeneka Pi Payment",
+      metadata: sanitizeMetadata(data.metadata),
+      createdAt: new Date().toISOString(),
+    }),
     paymentId: cleanId,
     txid: cleanTxid,
-    amount: check.amount,
-    memo:
-      typeof data.memo === "string"
-        ? data.memo
-        : pendingRecord.memo,
-    metadata: sanitizeMetadata(data.metadata ?? pendingRecord.metadata),
+    amount,
+    memo: typeof data.memo === "string" ? data.memo : existingPaid?.memo ?? "Eyeneka Pi Payment",
+    metadata: sanitizeMetadata(data.metadata ?? existingPaid?.metadata),
     status: "PAID",
     granted: true,
     completedAt: new Date().toISOString(),
   });
+
+  console.log(
+    `[EYENEKA Pi Complete] Success paymentId=${idPrefix}... piStatus=${response.status}`
+  );
 
   return {
     status: 200,
@@ -816,8 +635,7 @@ export async function completePiPayment(
       grantIssued: true,
       paymentId: cleanId,
       txid: cleanTxid,
-      order: completedOrder,
-      payment: data,
+      data,
     },
   };
 }
@@ -832,11 +650,15 @@ export async function cancelPiPayment(paymentId: unknown): Promise<{
 
   const apiKey = getPiApiKey();
   if (!apiKey) {
+    console.error(
+      "[EYENEKA Pi Cancel] Missing server Pi API key env var (checked PI_NETWORK_API_KEY and PI_API_KEY)."
+    );
     return {
       status: 500,
       body: {
         ok: false,
-        error: "PI_NETWORK_API_KEY is not configured on the server.",
+        error: "PI_NETWORK_API_KEY / PI_API_KEY is not configured on the server.",
+        details: "Set PI_NETWORK_API_KEY or PI_API_KEY in Vercel Environment Variables.",
       },
     };
   }
@@ -850,16 +672,27 @@ export async function cancelPiPayment(paymentId: unknown): Promise<{
         Authorization: `Key ${apiKey}`,
         "Content-Type": "application/json",
       },
+      body: JSON.stringify({}),
     }
   );
 
-  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  const rawText = await response.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = rawText ? (JSON.parse(rawText) as Record<string, unknown>) : {};
+  } catch {
+    data = { raw: rawText };
+  }
+
   if (!response.ok) {
+    const errMsg = extractPiErrorMessage(data, "Pi Platform API payment cancel failed.");
     return {
       status: response.status >= 400 ? response.status : 502,
       body: {
         ok: false,
-        error: extractPiErrorMessage(data, "Pi Platform API payment cancel failed."),
+        piStatus: response.status,
+        error: errMsg,
+        details: rawText ? rawText.slice(0, 500) : errMsg,
       },
     };
   }
@@ -871,7 +704,7 @@ export async function cancelPiPayment(paymentId: unknown): Promise<{
 
   return {
     status: 200,
-    body: { ok: true, cancelled: true, paymentId: cleanId, payment: data },
+    body: { ok: true, cancelled: true, paymentId: cleanId, data },
   };
 }
 
@@ -886,7 +719,7 @@ export async function resumeServerIncompletePayments(): Promise<{
       body: {
         ok: true,
         resumedCount: 0,
-        skipped: "PI_NETWORK_API_KEY not configured",
+        skipped: "PI_NETWORK_API_KEY / PI_API_KEY not configured",
       },
     };
   }

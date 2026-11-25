@@ -9,7 +9,132 @@ import {
   ShieldCheck,
   Trash2,
 } from "lucide-react";
-import { LEGAL_DOCUMENTS } from "../data/legalDocuments";
+interface LegalDocument {
+  id: string;
+  title: string;
+  updated: string;
+  sections: { heading: string; body: string }[];
+}
+
+const UPDATED_DATE = new Date().toISOString().slice(0, 10);
+
+const LEGAL_DOCUMENTS: LegalDocument[] = [
+  {
+    id: "terms-of-service",
+    title: "Terms of Service",
+    updated: UPDATED_DATE,
+    sections: [
+      {
+        heading: "1. Platform Purpose",
+        body: "EYENEKA is a global, borderless people utility for skills learning, verified micro-gig escrow, everyday health literacy navigation, and peer savings circles. EYENEKA is not an e-commerce store and does not sell physical goods, eSIMs, VPNs, virtual cards, phone numbers, or AI credits.",
+      },
+      {
+        heading: "2. Pioneer Eligibility & Conduct",
+        body: "All accounts authenticate through Pi Network SDK v2.0 inside Pi Browser. Pioneers must use accurate deliverables, respect community safety rules, and never solicit off-app payments or personal financial credentials.",
+      },
+    ],
+  },
+  {
+    id: "privacy-data-ownership",
+    title: "Privacy & Data Ownership",
+    updated: UPDATED_DATE,
+    sections: [
+      {
+        heading: "1. User Owns Data",
+        body: "EYENEKA collects only your Pi-verified session identity and the records you create inside the app. You can export your complete JSON data archive or permanently delete all your data at any time from the Law tab.",
+      },
+      {
+        heading: "2. Session Security",
+        body: "Pi access tokens are exchanged server-side only and signed session tokens remain in active application memory rather than persistent browser storage.",
+      },
+    ],
+  },
+  {
+    id: "escrow-service-fee",
+    title: "Escrow & 8% Fee Rules",
+    updated: UPDATED_DATE,
+    sections: [
+      {
+        heading: "1. Transparent Fee Breakdown",
+        body: "Every verified micro-gig displays the 8% EYENEKA service fee upfront before funds are locked. Escrow funds remain locked until deliverable proof is submitted and approved, or resolved through dispute review.",
+      },
+      {
+        heading: "2. No Unilateral Auto-Release During Disputes",
+        body: "If a gig enters Disputed status, escrow funds remain locked pending resolution and never auto-release while disputed.",
+      },
+    ],
+  },
+  {
+    id: "pi-only-payment",
+    title: "Pi-Only Payment Policy",
+    updated: UPDATED_DATE,
+    sections: [
+      {
+        heading: "1. Pi Coin Exclusively",
+        body: "All platform fees, certificates, boosts, care partner listings, and gig escrow settlements operate strictly in π via Pi.createPayment inside Pi Browser. No fiat currencies, bank transfers, cards, or external tokens are accepted.",
+      },
+      {
+        heading: "2. No Financial Advice or Yield",
+        body: "EYENEKA does not offer fiat exchange, staking, interest, or investment returns.",
+      },
+    ],
+  },
+  {
+    id: "verified-certificates",
+    title: "Verified Certificate Standards",
+    updated: UPDATED_DATE,
+    sections: [
+      {
+        heading: "1. Free Learning, Optional Verified Mint",
+        body: "All EYENEKA lessons and skill quizzes are free to study. Pioneers who pass a skill quiz may mint a Verified Certificate (0.1–0.5 π) carrying their @username, skill title, issue date, and verification reference to unlock corresponding gigs and earn +10 Trust Score.",
+      },
+    ],
+  },
+  {
+    id: "care-disclaimer",
+    title: "Care Navigation Disclaimer",
+    updated: UPDATED_DATE,
+    sections: [
+      {
+        heading: "1. Educational Information Only",
+        body: "First-aid guides, wellness checks, medicine reminders, and community care listings are educational utilities and do not replace licensed medical diagnosis or emergency services. Always seek qualified professional care for urgent symptoms.",
+      },
+    ],
+  },
+  {
+    id: "savings-circle-charter",
+    title: "Savings Circle Charter",
+    updated: UPDATED_DATE,
+    sections: [
+      {
+        heading: "1. Zero-Interest Peer Rotation",
+        body: "Community savings circles coordinate transparent peer contributions with 0% interest and member-voted emergency food pools. Late or missed cycles directly adjust member Trust Score.",
+      },
+    ],
+  },
+  {
+    id: "dispute-protocol",
+    title: "Dispute Resolution Protocol",
+    updated: UPDATED_DATE,
+    sections: [
+      {
+        heading: "1. Three-Stage Evidence Review",
+        body: "Disputed gigs progress through structured proof, checklist, and messaging evidence review while funds remain safely frozen in escrow.",
+      },
+    ],
+  },
+  {
+    id: "safety-anti-scam",
+    title: "Safety & Anti-Scam Rules",
+    updated: UPDATED_DATE,
+    sections: [
+      {
+        heading: "1. Zero Off-App Solicitation",
+        body: "Asking Pioneers to send Pi outside Pi.createPayment or requesting passphrases results in immediate blocking and community safety reporting.",
+      },
+    ],
+  },
+];
 
 interface LawViewProps {
   blockedUsers: string[];
