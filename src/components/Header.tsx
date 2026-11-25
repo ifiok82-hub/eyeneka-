@@ -8,6 +8,7 @@ interface HeaderProps {
   activeTab: TabKey;
   onTabChange: (tab: TabKey) => void;
   piConnected: boolean;
+  connectingPi?: boolean;
   kycVerified: boolean;
   username: string;
   trustScore: number;
@@ -23,6 +24,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeTab,
   onTabChange,
   piConnected,
+  connectingPi = false,
   kycVerified,
   username,
   trustScore,
@@ -103,8 +105,9 @@ export const Header: React.FC<HeaderProps> = ({
 
           <button
             type="button"
+            disabled={connectingPi}
             onClick={onConnectPi}
-            className={`min-h-[44px] px-3.5 sm:px-4 rounded-xl text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FFC800] ${
+            className={`min-h-[44px] px-3.5 sm:px-4 rounded-xl text-xs sm:text-sm font-semibold inline-flex items-center gap-2 transition-colors whitespace-nowrap shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#FFC800] disabled:opacity-70 ${
               piConnected
                 ? "bg-white/10 text-white border border-white/15 hover:bg-white/15"
                 : "bg-[#FFC800] text-[#050507] hover:bg-[#eab800]"
@@ -114,6 +117,11 @@ export const Header: React.FC<HeaderProps> = ({
               <>
                 {kycVerified && <ShieldCheck className="w-4 h-4 text-[#22C55E] shrink-0" />}
                 <span className="max-w-[110px] truncate">@{username}</span>
+              </>
+            ) : connectingPi ? (
+              <>
+                <Wallet className="w-4 h-4 shrink-0" />
+                <span>Connecting...</span>
               </>
             ) : (
               <>

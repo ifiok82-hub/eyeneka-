@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from "react";
-import { AlertCircle, CheckCircle2, ExternalLink, ShieldCheck, X } from "lucide-react";
+import { AlertCircle, CheckCircle2, ExternalLink, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { PendingPiPayment } from "../types";
 import {
   PI_BROWSER_REQUIRED_MESSAGE,
+  PI_POPUP_TIMEOUT_MESSAGE,
   executePiPayment,
   isPiBrowserAvailable,
+  retryConnectPi,
 } from "../lib/piSdk";
 
 interface PiPaymentModalProps {
@@ -36,6 +38,27 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
 
   const inPiBrowser = isPiBrowserAvailable();
 
+  const handleRetryConnect = async () => {
+    if (!inPiBrowser) {
+      setError(PI_BROWSER_REQUIRED_MESSAGE);
+      return;
+    }
+    setProcessing(true);
+    setError(null);
+    setStatusMessage("Connecting...");
+    try {
+      const attempt = await retryConnectPi();
+      if (attempt.success) {
+        setStatusMessage("Connected! Tap Pay with Pi (Testnet) to continue.");
+      } else {
+        setStatusMessage(null);
+        setError(attempt.error || PI_POPUP_TIMEOUT_MESSAGE);
+      }
+    } finally {
+      setProcessing(false);
+    }
+  };
+
   const handleConfirm = async () => {
     if (!inPiBrowser) {
       setError(PI_BROWSER_REQUIRED_MESSAGE);
@@ -44,7 +67,7 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
 
     setProcessing(true);
     setError(null);
-    setStatusMessage("Waiting for approval...");
+    setStatusMessage("Connecting...");
 
     try {
       const res = await executePiPayment(
@@ -158,9 +181,20 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
             {error && (
               <div
                 role="alert"
-                className="rounded-xl bg-red-50 border border-red-200 p-3 text-xs font-semibold text-red-700"
+                className="rounded-xl bg-red-50 border border-red-200 p-3 space-y-2 text-xs font-semibold text-red-700"
               >
-                {error}
+                <p className="break-words">{error}</p>
+                {inPiBrowser && (
+                  <button
+                    type="button"
+                    disabled={processing}
+                    onClick={handleRetryConnect}
+                    className="min-h-[36px] px-3 py-1.5 rounded-lg bg-white border border-red-300 text-red-700 hover:bg-red-100 inline-flex items-center gap-1.5 font-bold"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Retry Connect Pi</span>
+                  </button>
+                )}
               </div>
             )}
 

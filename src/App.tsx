@@ -604,6 +604,7 @@ import {
   initPiSdk,
   logoutPiSession,
   resumeIncompletePayments,
+  retryConnectPi,
 } from "./lib/piSdk";
 import { Header } from "./components/Header";
 import { BottomNav } from "./components/BottomNav";
@@ -670,6 +671,7 @@ export default function App() {
   const [pendingPayment, setPendingPayment] = useState<PendingPiPayment | null>(null);
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [connectingPi, setConnectingPi] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
@@ -843,23 +845,32 @@ export default function App() {
     showToast(`Welcome, Pioneer @${auth.username}`);
   };
 
-  const handleEnsurePiConnected = async (): Promise<{ connected: boolean; error?: string }> => {
-    if (piConnected && username) {
+  const handleEnsurePiConnected = async (options?: {
+    fresh?: boolean;
+  }): Promise<{ connected: boolean; error?: string }> => {
+    if (!options?.fresh && piConnected && username) {
       return { connected: true };
     }
     setAuthError(null);
-    const attempt = await authenticateWithPiSdk();
-    if (attempt.success && attempt.result) {
-      handleAuthenticated({
-        username: attempt.result.username,
-        kycVerified: attempt.result.kycVerified,
-        inPiBrowser: true,
-      });
-      return { connected: true };
+    setConnectingPi(true);
+    try {
+      const attempt = options?.fresh
+        ? await retryConnectPi()
+        : await authenticateWithPiSdk();
+      if (attempt.success && attempt.result) {
+        handleAuthenticated({
+          username: attempt.result.username,
+          kycVerified: attempt.result.kycVerified,
+          inPiBrowser: true,
+        });
+        return { connected: true };
+      }
+      const errMsg = attempt.error ?? PI_SIGNIN_ERROR_MESSAGE;
+      setAuthError(errMsg);
+      return { connected: false, error: errMsg };
+    } finally {
+      setConnectingPi(false);
     }
-    const errMsg = attempt.error ?? PI_SIGNIN_ERROR_MESSAGE;
-    setAuthError(errMsg);
-    return { connected: false, error: errMsg };
   };
 
   const handleOpenPiConnect = async () => {
@@ -1992,6 +2003,7 @@ export default function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         piConnected={piConnected}
+        connectingPi={connectingPi}
         kycVerified={kycVerified}
         username={username}
         trustScore={trustScore}

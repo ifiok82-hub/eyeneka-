@@ -2,10 +2,11 @@ export const PI_OAUTH_CLIENT_ID = "xWHNaUUWdRg4mpkSUSlfh0NGvLF1iOrcEDivLTC";
 export const PI_APP_REDIRECT_URL = "https://eyeneka.vercel.app/";
 export const PI_AUTH_SCOPES: ["username", "payments"] = ["username", "payments"];
 export const PI_SIGNIN_ERROR_MESSAGE = "Pi Sign-In failed. Try again in Pi Browser.";
-export const PI_SDK_NOT_FOUND_MESSAGE =
-  "Open Eyeneka in Pi Browser to connect Pi. Pi SDK not found.";
+export const PI_SDK_NOT_FOUND_MESSAGE = "Open via Pi App address in Pi Browser";
 export const PI_BROWSER_REQUIRED_MESSAGE = PI_SDK_NOT_FOUND_MESSAGE;
 export const PI_CANCELLED_MESSAGE = "Payment cancelled. No Pi was taken.";
+export const PI_POPUP_TIMEOUT_MESSAGE =
+  "Pi popup did not appear. Open Eyeneka via its Pi address https://eyenekaurr8852.pinet.com in Pi Browser (not vercel.app), log into Pi, unlock Pi Wallet, then tap Connect Pi.";
 
 export class PiPaymentCancelledError extends Error {
   constructor(message = PI_CANCELLED_MESSAGE) {
@@ -27,6 +28,7 @@ export interface PiAuthAttempt {
   success: boolean;
   result: PiAuthResult | null;
   error?: string;
+  timedOut?: boolean;
 }
 
 export interface PiPaymentPayload {
@@ -90,7 +92,7 @@ declare global {
 
 const PI_WALLET_TIMEOUT_MS = 60000;
 
-let piSdkInitialized = false;
+let alreadyInit = false;
 let initInFlight: Promise<boolean> | null = null;
 let lastInitError: string | null = null;
 
@@ -98,8 +100,7 @@ let inMemorySessionToken: string | null = null;
 let inMemoryUser: { uid: string; username: string } | null = null;
 let paymentScopeAuthenticated = false;
 
-let connectAuthInFlight: Promise<PiAuthAttempt> | null = null;
-let paymentScopeInFlight: Promise<void> | null = null;
+let authInFlight: Promise<PiAuthAttempt> | null = null;
 
 const approvedOrInFlightPaymentIds = new Set<string>();
 const completedOrInFlightPaymentIds = new Set<string>();
@@ -113,7 +114,7 @@ export function getVerifiedSessionUser(): { uid: string; username: string } | nu
 }
 
 export function isPiConnectedSession(): boolean {
-  return Boolean(inMemorySessionToken && inMemoryUser?.username);
+  return Boolean(inMemoryUser?.username && paymentScopeAuthenticated);
 }
 
 export function getLastInitError(): string | null {
@@ -157,10 +158,10 @@ export function isRealPiBrowserEnvironment(): boolean {
 export async function initPiSdk(): Promise<boolean> {
   if (typeof window === "undefined" || !window.Pi) {
     lastInitError = PI_SDK_NOT_FOUND_MESSAGE;
-    console.log("[EYENEKA Pi] Pi.init skipped: window.Pi not found");
+    console.log("[EYENEKA Pi] Pi.init skipped: window.Pi undefined");
     return false;
   }
-  if (piSdkInitialized) {
+  if (alreadyInit) {
     return true;
   }
   if (initInFlight) {
@@ -169,7 +170,7 @@ export async function initPiSdk(): Promise<boolean> {
   initInFlight = (async () => {
     try {
       await window.Pi!.init({ version: "2.0" });
-      piSdkInitialized = true;
+      alreadyInit = true;
       lastInitError = null;
       console.log("[EYENEKA Pi] Pi.init result: success (version 2.0)");
       return true;
@@ -185,10 +186,17 @@ export async function initPiSdk(): Promise<boolean> {
   return await initInFlight;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, timeoutMessage: string): Promise<T> {
+class AuthTimeoutError extends Error {
+  constructor(message = PI_POPUP_TIMEOUT_MESSAGE) {
+    super(message);
+    this.name = "AuthTimeoutError";
+  }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, errFactory: () => Error): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = window.setTimeout(() => {
-      reject(new Error(timeoutMessage));
+      reject(errFactory());
     }, ms);
     promise.then(
       (val) => {
@@ -268,7 +276,7 @@ async function exchangeAccessTokenForSession(accessToken: string): Promise<{
   const res = await withTimeout(
     postJsonWithDetails("/api/pi/login", { accessToken }),
     15000,
-    "Server /api/pi/login verification timed out after 15s."
+    () => new Error("Server /api/pi/login verification timed out after 15s.")
   );
   const userObj = res.data.user as { uid?: unknown; username?: unknown } | undefined;
   const sessionToken = typeof res.data.sessionToken === "string" ? res.data.sessionToken : "";
@@ -338,23 +346,24 @@ export async function handleIncompletePayment(payment: IncompletePiPayment): Pro
 }
 
 export async function resumeIncompletePayments(): Promise<number> {
-  let resumed = 0;
   if (!isPiBrowserAvailable()) {
     return 0;
   }
   const sdkReady = await initPiSdk();
+  if (!sdkReady || !window.Pi) {
+    return 0;
+  }
 
+  let resumed = 0;
   if (
-    sdkReady &&
     isRealPiBrowserEnvironment() &&
-    window.Pi &&
     typeof window.Pi.getIncompletePayments === "function"
   ) {
     try {
       const pending = await window.Pi.getIncompletePayments();
       if (Array.isArray(pending)) {
         for (const p of pending) {
-          await handleIncompletePayment(p);
+          void handleIncompletePayment(p);
           resumed += 1;
         }
       }
@@ -378,7 +387,9 @@ export async function resumeIncompletePayments(): Promise<number> {
   return resumed;
 }
 
-export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
+export async function authenticateWithPiSdk(options?: {
+  fresh?: boolean;
+}): Promise<PiAuthAttempt> {
   if (typeof window === "undefined" || !window.Pi) {
     return {
       success: false,
@@ -387,7 +398,13 @@ export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
     };
   }
 
-  if (inMemorySessionToken && inMemoryUser) {
+  if (options?.fresh && !authInFlight) {
+    inMemoryUser = null;
+    inMemorySessionToken = null;
+    paymentScopeAuthenticated = false;
+  }
+
+  if (inMemoryUser?.username && paymentScopeAuthenticated) {
     return {
       success: true,
       result: {
@@ -400,12 +417,12 @@ export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
     };
   }
 
-  if (connectAuthInFlight) {
-    console.log("[EYENEKA Pi] Reusing in-flight authenticateWithPiSdk promise");
-    return await connectAuthInFlight;
+  if (authInFlight) {
+    console.log("[EYENEKA Pi] Returning existing in-flight Pi.authenticate promise");
+    return await authInFlight;
   }
 
-  connectAuthInFlight = (async (): Promise<PiAuthAttempt> => {
+  authInFlight = (async (): Promise<PiAuthAttempt> => {
     const sdkReady = await initPiSdk();
     if (!sdkReady || !window.Pi) {
       return {
@@ -416,17 +433,23 @@ export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
     }
 
     try {
-      console.log("[EYENEKA Pi] Calling Pi.authenticate(['username'])...");
+      console.log("[EYENEKA Pi] Calling Pi.authenticate(['username','payments']) first (no blocking fetch before)...");
       const auth = await withTimeout(
-        window.Pi.authenticate(["username"], (incomplete) => {
+        window.Pi.authenticate(PI_AUTH_SCOPES, (incomplete) => {
           void handleIncompletePayment(incomplete);
         }),
         PI_WALLET_TIMEOUT_MS,
-        "Pi login timed out. Tap Connect Pi first, allow Username permission, then try again. Error: Pi.authenticate timed out after 60s"
+        () => new AuthTimeoutError(PI_POPUP_TIMEOUT_MESSAGE)
       );
 
       const accessToken = typeof auth?.accessToken === "string" ? auth.accessToken.trim() : "";
-      if (!accessToken) {
+      const sdkUsername =
+        typeof auth?.user?.username === "string"
+          ? auth.user.username.trim().replace(/^@/, "")
+          : "";
+      const sdkUid = typeof auth?.user?.uid === "string" ? auth.user.uid.trim() : "";
+
+      if (!accessToken && !sdkUsername) {
         return {
           success: false,
           result: null,
@@ -434,89 +457,57 @@ export async function authenticateWithPiSdk(): Promise<PiAuthAttempt> {
         };
       }
 
-      // Verify token with Pi /v2/me (or App Studio login) and save session
-      const verified = await exchangeAccessTokenForSession(accessToken);
-      console.log("[EYENEKA Pi] Authenticated Pioneer:", verified.user.username);
+      paymentScopeAuthenticated = true;
+      inMemoryUser = {
+        uid: sdkUid || "pending-verify",
+        username: sdkUsername || "Pioneer",
+      };
+
+      // Run /api/pi/login verification in the background AFTER Pi.authenticate succeeds
+      if (accessToken) {
+        void exchangeAccessTokenForSession(accessToken)
+          .then((verified) => {
+            inMemoryUser = verified.user;
+            console.log("[EYENEKA Pi] Background session verified for:", verified.user.username);
+          })
+          .catch((bgErr) => {
+            console.log("[EYENEKA Pi] Background /api/pi/login note:", bgErr);
+          });
+      }
+
+      console.log("[EYENEKA Pi] Pi.authenticate succeeded:", inMemoryUser.username);
       return {
         success: true,
         result: {
           connected: true,
-          username: verified.user.username,
-          uid: verified.user.uid,
-          kycVerified: true,
+          username: inMemoryUser.username,
+          uid: inMemoryUser.uid,
+          kycVerified: Boolean(auth?.user?.kyc ?? true),
           inPiBrowser: true,
         },
       };
     } catch (err) {
-      console.log("[EYENEKA Pi] Pi.authenticate / login error:", err);
+      paymentScopeAuthenticated = false;
+      console.log("[EYENEKA Pi] Pi.authenticate error:", err);
+      const isTimeout = err instanceof AuthTimeoutError;
       const rawErr =
         err instanceof Error && err.message ? err.message : PI_SIGNIN_ERROR_MESSAGE;
       return {
         success: false,
         result: null,
         error: rawErr,
+        timedOut: isTimeout,
       };
     } finally {
-      connectAuthInFlight = null;
+      authInFlight = null;
     }
   })();
 
-  return await connectAuthInFlight;
+  return await authInFlight;
 }
 
-async function ensurePiPaymentSession(
-  onStatusChange?: (statusText: string) => void
-): Promise<void> {
-  if (typeof window === "undefined" || !window.Pi) {
-    throw new Error(PI_SDK_NOT_FOUND_MESSAGE);
-  }
-  if (paymentScopeAuthenticated) {
-    return;
-  }
-
-  // Never start a concurrent Pi.authenticate if Connect Pi is currently in flight
-  if (connectAuthInFlight) {
-    console.log("[EYENEKA Pi] Waiting for active Connect Pi auth before payment scope");
-    onStatusChange?.("Connecting to Pi...");
-    const res = await connectAuthInFlight;
-    if (!res.success) {
-      throw new Error(res.error || PI_SIGNIN_ERROR_MESSAGE);
-    }
-  }
-
-  if (paymentScopeInFlight) {
-    console.log("[EYENEKA Pi] Reusing in-flight payment scope authenticate promise");
-    return await paymentScopeInFlight;
-  }
-
-  paymentScopeInFlight = (async () => {
-    onStatusChange?.("Connecting to Pi...");
-    try {
-      console.log("[EYENEKA Pi] Calling Pi.authenticate(['username', 'payments'])...");
-      const auth = await withTimeout(
-        window.Pi!.authenticate(PI_AUTH_SCOPES, (incomplete) => {
-          void handleIncompletePayment(incomplete);
-        }),
-        PI_WALLET_TIMEOUT_MS,
-        "Pi login timed out. Tap Connect Pi first, allow Username permission, then try again. Error: Pi.authenticate(['username','payments']) timed out after 60s"
-      );
-      paymentScopeAuthenticated = true;
-
-      const accessToken = typeof auth?.accessToken === "string" ? auth.accessToken.trim() : "";
-      if (accessToken && !inMemorySessionToken) {
-        void exchangeAccessTokenForSession(accessToken).catch(() => {
-          // Non-blocking: /api/pi/approve & /api/pi/complete verify directly with Pi API key
-        });
-      }
-    } catch (err) {
-      paymentScopeAuthenticated = false;
-      throw err;
-    } finally {
-      paymentScopeInFlight = null;
-    }
-  })();
-
-  return await paymentScopeInFlight;
+export async function retryConnectPi(): Promise<PiAuthAttempt> {
+  return await authenticateWithPiSdk({ fresh: true });
 }
 
 export async function executePiPayment(
@@ -532,16 +523,16 @@ export async function executePiPayment(
     throw new Error(lastInitError || PI_SDK_NOT_FOUND_MESSAGE);
   }
 
-  await ensurePiPaymentSession(onStatusChange);
+  onStatusChange?.("Connecting...");
+  const authAttempt = await authenticateWithPiSdk();
+  if (!authAttempt.success || !authAttempt.result) {
+    throw new Error(authAttempt.error || PI_SIGNIN_ERROR_MESSAGE);
+  }
 
   return await new Promise<PiPaymentReceipt>((resolve, reject) => {
     let settled = false;
     let walletTimer: number | null = window.setTimeout(() => {
-      failOnce(
-        new Error(
-          "Pi login timed out. Tap Connect Pi first, allow Username permission, then try again. Error: Waiting for Pi Wallet timed out after 60s"
-        )
-      );
+      failOnce(new Error(PI_POPUP_TIMEOUT_MESSAGE));
     }, PI_WALLET_TIMEOUT_MS);
 
     const clearWalletTimer = () => {

@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { AlertCircle, CheckCircle2, ExternalLink, Loader2, ShieldCheck } from "lucide-react";
+import { AlertCircle, CheckCircle2, ExternalLink, Loader2, RotateCcw, ShieldCheck } from "lucide-react";
 import {
   PI_CANCELLED_MESSAGE,
+  PI_POPUP_TIMEOUT_MESSAGE,
   PI_SDK_NOT_FOUND_MESSAGE,
   PiPaymentCancelledError,
   PiPaymentReceipt,
@@ -11,7 +12,7 @@ import {
 
 interface FooterProps {
   piConnected?: boolean;
-  onEnsureConnected?: () => Promise<{ connected: boolean; error?: string }>;
+  onEnsureConnected?: (options?: { fresh?: boolean }) => Promise<{ connected: boolean; error?: string }>;
   onTestPaymentComplete?: (receipt: PiPaymentReceipt) => void;
 }
 
@@ -29,6 +30,33 @@ export const Footer: React.FC<FooterProps> = ({
 
   const isBusy = status === "connecting" || status === "waiting";
 
+  const handleRetryConnect = async () => {
+    setErrorMsg(null);
+    setHelperNotice(null);
+    if (!isPiBrowserAvailable()) {
+      setErrorMsg(PI_SDK_NOT_FOUND_MESSAGE);
+      setStatus("error");
+      return;
+    }
+    setStatus("connecting");
+    try {
+      const authRes = onEnsureConnected
+        ? await onEnsureConnected({ fresh: true })
+        : { connected: false, error: PI_POPUP_TIMEOUT_MESSAGE };
+      if (authRes.connected) {
+        setStatus("idle");
+        setHelperNotice("Connected! Tap Pi Testnet Payment to open Pi Wallet.");
+      } else {
+        setErrorMsg(authRes.error || PI_POPUP_TIMEOUT_MESSAGE);
+        setStatus("error");
+      }
+    } catch (err: unknown) {
+      const realError = err instanceof Error && err.message ? err.message : PI_POPUP_TIMEOUT_MESSAGE;
+      setErrorMsg(realError);
+      setStatus("error");
+    }
+  };
+
   const handleTestPayment = async () => {
     setErrorMsg(null);
     setHelperNotice(null);
@@ -42,26 +70,23 @@ export const Footer: React.FC<FooterProps> = ({
 
     if (!piConnected) {
       setStatus("connecting");
-      setHelperNotice("Tap Connect Pi first");
       try {
         const authRes = onEnsureConnected
           ? await onEnsureConnected()
-          : { connected: false, error: "Tap Connect Pi first" };
+          : { connected: false, error: PI_POPUP_TIMEOUT_MESSAGE };
 
-        if (authRes.connected) {
-          setStatus("idle");
-          setHelperNotice("Connected! Tap again to pay 1 Pi in Pi Wallet.");
-        } else {
-          setErrorMsg(authRes.error || "Tap Connect Pi first");
+        if (!authRes.connected) {
+          setErrorMsg(authRes.error || PI_POPUP_TIMEOUT_MESSAGE);
           setStatus("error");
+          return;
         }
       } catch (err: unknown) {
         const realError =
-          err instanceof Error && err.message ? err.message : "Tap Connect Pi first";
+          err instanceof Error && err.message ? err.message : PI_POPUP_TIMEOUT_MESSAGE;
         setErrorMsg(realError);
         setStatus("error");
+        return;
       }
-      return;
     }
 
     setStatus("waiting");
@@ -97,14 +122,17 @@ export const Footer: React.FC<FooterProps> = ({
   const formatErrorBanner = (msg: string) => {
     if (
       msg === PI_SDK_NOT_FOUND_MESSAGE ||
-      msg.startsWith("Pi login timed out.")
+      msg === PI_POPUP_TIMEOUT_MESSAGE ||
+      msg.startsWith("Pi popup did not appear.") ||
+      msg.startsWith("Pi login timed out.") ||
+      msg.startsWith("Open via Pi App")
     ) {
       return msg;
     }
     if (msg.startsWith("Pi approve failed") || msg.startsWith("Pi complete failed")) {
       return msg;
     }
-    return `Pi payment failed: ${msg} - Tap Connect Pi first`;
+    return `Pi payment failed: ${msg}`;
   };
 
   return (
@@ -137,7 +165,7 @@ export const Footer: React.FC<FooterProps> = ({
             {status === "connecting" ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                <span>Connecting to Pi...</span>
+                <span>Connecting...</span>
               </>
             ) : status === "waiting" ? (
               <>
@@ -159,7 +187,7 @@ export const Footer: React.FC<FooterProps> = ({
             ) : status === "error" && errorMsg ? (
               <>
                 <AlertCircle className="w-4 h-4 shrink-0" />
-                <span className="break-words">{formatErrorBanner(errorMsg)}</span>
+                <span className="break-words text-left">{formatErrorBanner(errorMsg)}</span>
               </>
             ) : (
               <>
@@ -168,6 +196,17 @@ export const Footer: React.FC<FooterProps> = ({
               </>
             )}
           </button>
+
+          {status === "error" && !piConnected && isPiBrowserAvailable() && (
+            <button
+              type="button"
+              onClick={handleRetryConnect}
+              className="min-h-[44px] px-4 py-2 rounded-xl border border-[#FFC800]/60 bg-[#FFC800]/10 text-[#FFC800] text-xs font-bold hover:bg-[#FFC800]/20 inline-flex items-center justify-center gap-1.5"
+            >
+              <RotateCcw className="w-3.5 h-3.5 shrink-0" />
+              <span>Retry Connect Pi</span>
+            </button>
+          )}
 
           {helperNotice && (
             <p className="text-xs font-semibold text-[#FFC800]">

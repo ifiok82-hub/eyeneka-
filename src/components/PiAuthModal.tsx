@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
-import { AlertCircle, ShieldCheck, Wallet, X } from "lucide-react";
+import { AlertCircle, RotateCcw, ShieldCheck, Wallet, X } from "lucide-react";
 import {
   PI_SIGNIN_ERROR_MESSAGE,
   authenticateWithPiSdk,
+  retryConnectPi,
 } from "../lib/piSdk";
 
 interface PiAuthModalProps {
@@ -35,11 +36,13 @@ export const PiAuthModal: React.FC<PiAuthModalProps> = ({
 
   const displayError = error ?? initialError;
 
-  const handleSdkLogin = async () => {
+  const handleSdkLogin = async (useFreshRetry = false) => {
     setLoading(true);
     setError(null);
     try {
-      const attempt = await authenticateWithPiSdk();
+      const attempt = useFreshRetry
+        ? await retryConnectPi()
+        : await authenticateWithPiSdk();
       if (attempt.success && attempt.result) {
         onAuthenticated({
           username: attempt.result.username,
@@ -90,7 +93,7 @@ export const PiAuthModal: React.FC<PiAuthModalProps> = ({
             >
               <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
               <div className="space-y-1">
-                <p className="font-bold">{displayError}</p>
+                <p className="font-bold break-words">{displayError}</p>
                 <p className="text-red-700">
                   Open EYENEKA inside Pi Browser and approve Pi Sign-In to connect your real @username.
                 </p>
@@ -111,11 +114,25 @@ export const PiAuthModal: React.FC<PiAuthModalProps> = ({
           <button
             type="button"
             disabled={loading}
-            onClick={handleSdkLogin}
+            onClick={() => handleSdkLogin(Boolean(displayError))}
             className="min-h-[48px] w-full rounded-xl bg-[#FFC800] text-[#050507] text-sm font-bold hover:bg-[#eab800] disabled:opacity-50 inline-flex items-center justify-center gap-2"
           >
-            <Wallet className="w-4 h-4" />
-            <span>{loading ? "Connecting to Pi Browser..." : "Sign In with Pi Browser"}</span>
+            {loading ? (
+              <>
+                <Wallet className="w-4 h-4" />
+                <span>Connecting...</span>
+              </>
+            ) : displayError ? (
+              <>
+                <RotateCcw className="w-4 h-4" />
+                <span>Retry Connect Pi</span>
+              </>
+            ) : (
+              <>
+                <Wallet className="w-4 h-4" />
+                <span>Sign In with Pi Browser</span>
+              </>
+            )}
           </button>
         </div>
       </div>
