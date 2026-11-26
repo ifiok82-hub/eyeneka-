@@ -217,10 +217,6 @@ export const WorkView: React.FC<WorkViewProps> = ({
       setPostError("Pi price must be between 0.2 π and 5.0 π per micro-gig.");
       return;
     }
-    if (price > 1 && !kycVerified) {
-      setPostError("Real Pi KYC verification is required to post gigs above 1.0 π.");
-      return;
-    }
     const scamCheck = containsScamOrPhone(`${newTitle} ${newDesc}`, true);
     if (scamCheck) {
       setPostError(scamCheck);
@@ -1124,12 +1120,6 @@ export const WorkView: React.FC<WorkViewProps> = ({
                   />
                 </div>
               </div>
-
-              {parsedNewPrice > 1 && !kycVerified && (
-                <div className="rounded-xl bg-amber-50 border border-amber-300 p-3 text-xs text-amber-900">
-                  Real Pi KYC is required to post gigs over 1.0 π. Connect and confirm Pi KYC in Header or keep price at 1.0 π or below.
-                </div>
-              )}
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">

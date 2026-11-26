@@ -101,6 +101,7 @@ let inMemoryUser: { uid: string; username: string } | null = null;
 let paymentScopeAuthenticated = false;
 
 let authInFlight: Promise<PiAuthAttempt> | null = null;
+let incompleteHandlingInFlight: Promise<void> | null = null;
 
 const approvedOrInFlightPaymentIds = new Set<string>();
 const completedOrInFlightPaymentIds = new Set<string>();
@@ -155,10 +156,21 @@ export function isRealPiBrowserEnvironment(): boolean {
   return isPiContext && typeof window.Pi !== "undefined";
 }
 
+function isPreviewOrLocalHost(): boolean {
+  if (typeof window === "undefined") return false;
+  const host = window.location.hostname || "";
+  return host === "localhost" || host === "127.0.0.1" || host.endsWith(".run.app");
+}
+
 export async function initPiSdk(): Promise<boolean> {
   if (typeof window === "undefined" || !window.Pi) {
     lastInitError = PI_SDK_NOT_FOUND_MESSAGE;
     console.log("[EYENEKA Pi] Pi.init skipped: window.Pi undefined");
+    return false;
+  }
+  if (isPreviewOrLocalHost() && !isRealPiBrowserEnvironment()) {
+    lastInitError = PI_SDK_NOT_FOUND_MESSAGE;
+    console.log("[EYENEKA Pi] Preview host outside Pi Browser; skipping Pi.init");
     return false;
   }
   if (alreadyInit) {
@@ -169,7 +181,15 @@ export async function initPiSdk(): Promise<boolean> {
   }
   initInFlight = (async () => {
     try {
-      await window.Pi!.init({ version: "2.0" });
+      const sdkInitPromise = Promise.resolve(window.Pi!.init({ version: "2.0" }));
+      sdkInitPromise.catch(() => {
+        // Swallow delayed SDK 120s messaging promise rejection when outside Pi Browser
+      });
+      await withTimeout(
+        sdkInitPromise,
+        15000,
+        () => new Error("Pi.init timed out after 15s. " + PI_SDK_NOT_FOUND_MESSAGE)
+      );
       alreadyInit = true;
       lastInitError = null;
       console.log("[EYENEKA Pi] Pi.init result: success (version 2.0)");
@@ -177,7 +197,7 @@ export async function initPiSdk(): Promise<boolean> {
     } catch (err) {
       const msg = err instanceof Error && err.message ? err.message : String(err);
       lastInitError = msg;
-      console.error("[EYENEKA Pi] Pi.init result: error", msg);
+      console.log("[EYENEKA Pi] Pi.init skipped/unavailable:", msg);
       return false;
     } finally {
       initInFlight = null;
@@ -214,19 +234,34 @@ function withTimeout<T>(promise: Promise<T>, ms: number, errFactory: () => Error
 async function postJsonWithDetails(
   url: string,
   payload: Record<string, unknown>,
-  bearerToken?: string | null
+  bearerToken?: string | null,
+  timeoutMs = 20000
 ): Promise<{ status: number; ok: boolean; data: Record<string, unknown> }> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (bearerToken) {
     headers.Authorization = `Bearer ${bearerToken}`;
   }
-  const response = await fetch(url, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  });
-  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-  return { status: response.status, ok: response.ok, data };
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timer = controller ? window.setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+      ...(controller ? { signal: controller.signal } : {}),
+    });
+    const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    return { status: response.status, ok: response.ok, data };
+  } catch (err: unknown) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`Request to ${url} timed out after ${Math.round(timeoutMs / 1000)}s.`);
+    }
+    throw err;
+  } finally {
+    if (timer !== null) {
+      window.clearTimeout(timer);
+    }
+  }
 }
 
 function extractDetailsText(rawDetails: unknown): string {
@@ -306,42 +341,53 @@ export async function handleIncompletePayment(payment: IncompletePiPayment): Pro
     status: payment.status,
   });
 
-  try {
-    if (txid && !payment.status?.developer_completed) {
-      if (completedOrInFlightPaymentIds.has(paymentId)) {
+  const run = (async () => {
+    try {
+      if (txid && !payment.status?.developer_completed) {
+        if (completedOrInFlightPaymentIds.has(paymentId)) {
+          return;
+        }
+        completedOrInFlightPaymentIds.add(paymentId);
+        try {
+          const completeRes = await postJsonWithDetails("/api/pi/complete", {
+            paymentId,
+            txid,
+          });
+          console.log("[EYENEKA Pi] Incomplete /api/pi/complete response:", {
+            paymentIdPrefix: idPrefix,
+            status: completeRes.status,
+            ok: completeRes.ok,
+          });
+          if (!completeRes.ok || completeRes.data.ok === false) {
+            completedOrInFlightPaymentIds.delete(paymentId);
+          }
+        } catch (err) {
+          completedOrInFlightPaymentIds.delete(paymentId);
+          throw err;
+        }
         return;
       }
-      completedOrInFlightPaymentIds.add(paymentId);
-      try {
-        const completeRes = await postJsonWithDetails("/api/pi/complete", {
-          paymentId,
-          txid,
-        });
-        console.log("[EYENEKA Pi] Incomplete /api/pi/complete response:", {
-          paymentIdPrefix: idPrefix,
-          status: completeRes.status,
-          ok: completeRes.ok,
-        });
-        if (!completeRes.ok || completeRes.data.ok === false) {
-          completedOrInFlightPaymentIds.delete(paymentId);
-        }
-      } catch (err) {
-        completedOrInFlightPaymentIds.delete(paymentId);
-        throw err;
-      }
-      return;
-    }
 
-    if (!payment.status?.developer_completed && !payment.status?.cancelled) {
-      const cancelRes = await postJsonWithDetails("/api/pi/cancel", { paymentId });
-      console.log("[EYENEKA Pi] Incomplete /api/pi/cancel response:", {
-        paymentIdPrefix: idPrefix,
-        status: cancelRes.status,
-        ok: cancelRes.ok,
-      });
+      if (!payment.status?.developer_completed && !payment.status?.cancelled) {
+        const cancelRes = await postJsonWithDetails("/api/pi/cancel", { paymentId });
+        console.log("[EYENEKA Pi] Incomplete /api/pi/cancel response:", {
+          paymentIdPrefix: idPrefix,
+          status: cancelRes.status,
+          ok: cancelRes.ok,
+        });
+      }
+    } catch (err) {
+      console.log("[EYENEKA Pi] Incomplete payment handler error:", err);
     }
-  } catch (err) {
-    console.log("[EYENEKA Pi] Incomplete payment handler error:", err);
+  })();
+
+  incompleteHandlingInFlight = run;
+  try {
+    await run;
+  } finally {
+    if (incompleteHandlingInFlight === run) {
+      incompleteHandlingInFlight = null;
+    }
   }
 }
 
@@ -529,6 +575,38 @@ export async function executePiPayment(
     throw new Error(authAttempt.error || PI_SIGNIN_ERROR_MESSAGE);
   }
 
+  if (incompleteHandlingInFlight) {
+    await withTimeout(incompleteHandlingInFlight, 8000, () => new Error("Incomplete cleanup wait")).catch(() => {
+      // Proceed even if cleanup took longer than 8s
+    });
+  }
+
+  const safeAmount = Number(Number(payload.amount).toFixed(2));
+  if (!Number.isFinite(safeAmount) || safeAmount <= 0) {
+    throw new Error("Invalid Pi payment amount. Must be greater than 0.");
+  }
+  const safeMemo =
+    String(payload.memo || "Eyeneka Pi Payment")
+      .trim()
+      .slice(0, 120) || "Eyeneka Pi Payment";
+  const safeMetadata: Record<string, string | number | boolean> = {};
+  if (payload.metadata && typeof payload.metadata === "object") {
+    for (const [k, v] of Object.entries(payload.metadata)) {
+      const cleanKey = String(k).trim().slice(0, 50);
+      if (!cleanKey) continue;
+      if (typeof v === "string") {
+        safeMetadata[cleanKey] = v.slice(0, 120);
+      } else if (typeof v === "number" && Number.isFinite(v)) {
+        safeMetadata[cleanKey] = v;
+      } else if (typeof v === "boolean") {
+        safeMetadata[cleanKey] = v;
+      }
+    }
+  }
+  if (Object.keys(safeMetadata).length === 0) {
+    safeMetadata.type = "payment";
+  }
+
   return await new Promise<PiPaymentReceipt>((resolve, reject) => {
     let settled = false;
     let walletTimer: number | null = window.setTimeout(() => {
@@ -552,13 +630,17 @@ export async function executePiPayment(
 
     try {
       const createPaymentStartMs = Date.now();
-      console.log("[EYENEKA Pi] createPayment-start", { ts: createPaymentStartMs });
+      console.log("[EYENEKA Pi] createPayment-start", {
+        ts: createPaymentStartMs,
+        amount: safeAmount,
+        type: safeMetadata.type ?? "unknown",
+      });
       onStatusChange?.("Waiting for Pi Wallet...");
       window.Pi!.createPayment(
         {
-          amount: payload.amount,
-          memo: payload.memo,
-          metadata: payload.metadata,
+          amount: safeAmount,
+          memo: safeMemo,
+          metadata: safeMetadata,
         },
         {
           onReadyForServerApproval: async (paymentId) => {
@@ -654,8 +736,8 @@ export async function executePiPayment(
                 resolve({
                   paymentId,
                   txHash: txid,
-                  amount: payload.amount,
-                  memo: payload.memo,
+                  amount: safeAmount,
+                  memo: safeMemo,
                   mode: "testnet-sdk",
                   status: "Confirmed",
                   grantIssued: res.data.grantIssued !== false,

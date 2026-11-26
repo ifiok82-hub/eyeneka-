@@ -601,6 +601,7 @@ import {
   PI_APP_REDIRECT_URL,
   PI_SIGNIN_ERROR_MESSAGE,
   authenticateWithPiSdk,
+  getVerifiedSessionUser,
   initPiSdk,
   logoutPiSession,
   resumeIncompletePayments,
@@ -825,8 +826,10 @@ export default function App() {
     kycVerified: boolean;
     inPiBrowser: boolean;
   }) => {
+    const cleanUsername = auth.username.replace(/^@/, "");
+    const nextHandle = `@${cleanUsername}`;
     setPiConnected(true);
-    setUsername(auth.username);
+    setUsername(cleanUsername);
     setKycVerified(auth.kycVerified);
     setInPiBrowser(auth.inPiBrowser);
     setAuthError(null);
@@ -834,7 +837,21 @@ export default function App() {
       setTrustScore((s) => Math.min(100, s + 20));
       setKycTrustAwarded(true);
     }
-    setActiveTab("home");
+    setCircles((prev) =>
+      prev.map((c) => ({
+        ...c,
+        nextRecipient: c.nextRecipient === "@pioneer" ? nextHandle : c.nextRecipient,
+        members: c.members.map((m) =>
+          m.handle === "@pioneer" ? { ...m, handle: nextHandle } : m
+        ),
+      }))
+    );
+    setGigs((prev) =>
+      prev.map((g) => (g.buyerHandle === "@pioneer" ? { ...g, buyerHandle: nextHandle } : g))
+    );
+    setResources((prev) =>
+      prev.map((r) => (r.addedBy === "@pioneer" ? { ...r, addedBy: nextHandle } : r))
+    );
     if (
       typeof window !== "undefined" &&
       window.location.origin === new URL(PI_APP_REDIRECT_URL).origin &&
@@ -842,7 +859,7 @@ export default function App() {
     ) {
       window.history.replaceState(null, "", "/");
     }
-    showToast(`Welcome, Pioneer @${auth.username}`);
+    showToast(`Welcome, Pioneer @${cleanUsername}`);
   };
 
   const handleEnsurePiConnected = async (options?: {
@@ -1051,7 +1068,7 @@ export default function App() {
 
   const handleMintCertificate = (lesson: Lesson, onMinted: (cert: CertificateRecord) => void) => {
     const certId = `CRT-${Date.now().toString().slice(-5)}`;
-    const certFee = lesson.certificateFeePi || 0.3;
+    const certFee = Number((lesson.certificateFeePi || 0.3).toFixed(2));
     setPendingPayment({
       title: "Verified Certificate (Testnet)",
       purpose: `Verified Certificate: ${lesson.title} (+10 Trust Score)`,
@@ -1679,13 +1696,14 @@ export default function App() {
   const handleContributeCycle = (circleId: string) => {
     const target = circles.find((c) => c.id === circleId);
     if (!target) return;
-    const handle = username ? `@${username}` : "@pioneer";
+    const contributionPi = Number(target.contributionPi.toFixed(2));
+    const initialHandle = username ? `@${username}` : "@pioneer";
     setPendingPayment({
       title: "Circle Cycle Contribution",
       purpose: `${target.name} · Cycle ${target.currentCycle}`,
-      amountPi: target.contributionPi,
+      amountPi: contributionPi,
       breakdown: [
-        { label: "Rotating Savings Pool Contribution (0% Interest)", amountPi: target.contributionPi },
+        { label: "Rotating Savings Pool Contribution (0% Interest)", amountPi: contributionPi },
       ],
       memo: `Eyeneka - Circle Contribution (${target.name})`,
       metadata: {
@@ -1695,14 +1713,16 @@ export default function App() {
       },
       escrowId: `CIR-${Date.now().toString().slice(-5)}`,
       onComplete: ({ paymentId, txHash, escrowId }) => {
+        const verifiedName = getVerifiedSessionUser()?.username || username;
+        const activeHandle = verifiedName ? `@${verifiedName}` : initialHandle;
         setCircles((prev) =>
           prev.map((c) => {
             if (c.id !== circleId) return c;
             return {
               ...c,
               members: c.members.map((m) =>
-                m.handle === handle
-                  ? { ...m, contributedThisCycle: true, lateFlag: false }
+                m.handle === activeHandle || m.handle === initialHandle || m.handle === "@pioneer"
+                  ? { ...m, handle: activeHandle, contributedThisCycle: true, lateFlag: false }
                   : m
               ),
             };
@@ -1714,7 +1734,7 @@ export default function App() {
             category: "Circles",
             type: "Circle Contribution",
             label: `${target.name} · Cycle ${target.currentCycle}`,
-            amountPi: target.contributionPi,
+            amountPi: contributionPi,
             direction: "out",
             status: "Confirmed",
             timestamp: "Just now",
@@ -1725,7 +1745,7 @@ export default function App() {
           },
           ...prev,
         ]);
-        showToast(`Recorded ${target.contributionPi.toFixed(2)} π real contribution.`);
+        showToast(`Recorded ${contributionPi.toFixed(2)} π real contribution.`);
       },
     });
   };
@@ -1834,10 +1854,11 @@ export default function App() {
     paymentType: "test" | "card" = "test",
     itemId = "core-team-test"
   ) => {
+    const safeAmount = Number(amountPi.toFixed(2));
     setPendingPayment({
       title: paymentType === "card" ? "Pioneer Card Renewal (0.20 π)" : "Pi Testnet Payment (1.00 π)",
       purpose: memo,
-      amountPi,
+      amountPi: safeAmount,
       memo: `Eyeneka - ${paymentType === "card" ? "Card Renewal" : "Test Payment"}`,
       metadata: {
         type: paymentType,
@@ -2259,6 +2280,8 @@ export default function App() {
       />
       <PiPaymentModal
         payment={pendingPayment}
+        piConnected={piConnected && Boolean(username)}
+        onEnsureConnected={handleEnsurePiConnected}
         onClose={() => setPendingPayment(null)}
       />
 

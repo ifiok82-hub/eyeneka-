@@ -3,7 +3,9 @@ import { AlertCircle, CheckCircle2, ExternalLink, RotateCcw, ShieldCheck, X } fr
 import { PendingPiPayment } from "../types";
 import {
   PI_BROWSER_REQUIRED_MESSAGE,
+  PI_CANCELLED_MESSAGE,
   PI_POPUP_TIMEOUT_MESSAGE,
+  PiPaymentCancelledError,
   executePiPayment,
   isPiBrowserAvailable,
   retryConnectPi,
@@ -11,12 +13,20 @@ import {
 
 interface PiPaymentModalProps {
   payment: PendingPiPayment | null;
+  piConnected?: boolean;
+  onEnsureConnected?: (options?: { fresh?: boolean }) => Promise<{ connected: boolean; error?: string }>;
   onClose: () => void;
 }
 
-export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose }) => {
+export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({
+  payment,
+  piConnected = false,
+  onEnsureConnected,
+  onClose,
+}) => {
   const [processing, setProcessing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [cancelledNotice, setCancelledNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [receipt, setReceipt] = useState<{
     paymentId: string;
@@ -30,6 +40,7 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
   useEffect(() => {
     setProcessing(false);
     setStatusMessage(null);
+    setCancelledNotice(null);
     setError(null);
     setReceipt(null);
   }, [payment]);
@@ -45,15 +56,21 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
     }
     setProcessing(true);
     setError(null);
+    setCancelledNotice(null);
     setStatusMessage("Connecting...");
     try {
-      const attempt = await retryConnectPi();
-      if (attempt.success) {
+      const attempt = onEnsureConnected
+        ? await onEnsureConnected({ fresh: true })
+        : await retryConnectPi().then((res) => ({ connected: res.success, error: res.error }));
+      if (attempt.connected) {
         setStatusMessage("Connected! Tap Pay with Pi (Testnet) to continue.");
       } else {
         setStatusMessage(null);
         setError(attempt.error || PI_POPUP_TIMEOUT_MESSAGE);
       }
+    } catch (err: unknown) {
+      setStatusMessage(null);
+      setError(err instanceof Error && err.message ? err.message : PI_POPUP_TIMEOUT_MESSAGE);
     } finally {
       setProcessing(false);
     }
@@ -67,9 +84,20 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
 
     setProcessing(true);
     setError(null);
-    setStatusMessage("Connecting...");
+    setCancelledNotice(null);
 
     try {
+      if (!piConnected && onEnsureConnected) {
+        setStatusMessage("Connecting...");
+        const authRes = await onEnsureConnected();
+        if (!authRes.connected) {
+          setStatusMessage(null);
+          setError(authRes.error || PI_POPUP_TIMEOUT_MESSAGE);
+          return;
+        }
+      }
+
+      setStatusMessage("Waiting for Pi Wallet...");
       const res = await executePiPayment(
         {
           amount: payment.amountPi,
@@ -97,6 +125,10 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
       }
     } catch (err: unknown) {
       setStatusMessage(null);
+      if (err instanceof PiPaymentCancelledError) {
+        setCancelledNotice(PI_CANCELLED_MESSAGE);
+        return;
+      }
       setError(err instanceof Error ? err.message : `Error: ${String(err)}`);
     } finally {
       setProcessing(false);
@@ -172,9 +204,18 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
               </span>
             </div>
 
-            {statusMessage && !error && (
+            {statusMessage && !error && !cancelledNotice && (
               <div className="rounded-xl bg-[#7C3AED]/10 border border-[#7C3AED]/30 p-3 text-xs font-semibold text-[#7C3AED]">
                 {statusMessage}
+              </div>
+            )}
+
+            {cancelledNotice && !error && (
+              <div
+                role="status"
+                className="rounded-xl bg-slate-100 border border-slate-300 p-3 text-xs font-semibold text-slate-800"
+              >
+                {cancelledNotice}
               </div>
             )}
 
@@ -184,7 +225,7 @@ export const PiPaymentModal: React.FC<PiPaymentModalProps> = ({ payment, onClose
                 className="rounded-xl bg-red-50 border border-red-200 p-3 space-y-2 text-xs font-semibold text-red-700"
               >
                 <p className="break-words">{error}</p>
-                {inPiBrowser && (
+                {inPiBrowser && !piConnected && (
                   <button
                     type="button"
                     disabled={processing}
